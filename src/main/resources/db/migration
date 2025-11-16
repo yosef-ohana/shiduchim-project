@@ -1,0 +1,8 @@
+CREATE TABLE users (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    age INT,
+    city VARCHAR(100),
+    about TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
