@@ -31,3 +31,5 @@ build/
 
 ### VS Code ###
 .vscode/
+/data/shiduchimdb.mv.db
+/data/shiduchimdb.trace.db
