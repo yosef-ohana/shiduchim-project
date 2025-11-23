@@ -11,128 +11,90 @@ import java.util.Optional;
 public interface MatchRepository extends JpaRepository<Match, Long> {
 
     // ============================================================
-    // 🔵 שליפות בסיסיות לפי שני המשתמשים
+    // 🔵 שליפות בסיסיות לפי שני משתמשים (נורמליזציה דו־כיוונית)
     // ============================================================
-
-    List<Match> findByUser1Id(Long userId);
-    List<Match> findByUser2Id(Long userId);
-
-    List<Match> findByUser1IdOrUser2Id(Long user1Id, Long user2Id);
-
-    Optional<Match> findByUser1IdAndUser2Id(Long user1Id, Long user2Id);
 
     Optional<Match> findByUser1IdAndUser2IdOrUser1IdAndUser2Id(
-            Long user1Id,
-            Long user2Id,
-            Long reversedUser1,
-            Long reversedUser2
+            Long user1, Long user2,
+            Long user2b, Long user1b
     );
-
-    boolean existsByUser1IdAndUser2Id(Long user1Id, Long user2Id);
 
     boolean existsByUser1IdAndUser2IdOrUser1IdAndUser2Id(
-            Long user1Id, Long user2Id,
-            Long reversedUser1, Long reversedUser2
+            Long user1, Long user2,
+            Long user2b, Long user1b
     );
 
     // ============================================================
-    // 🔵 Active / Blocked / Frozen / Chat
-    // ============================================================
-
-    List<Match> findByActiveTrue();
-    List<Match> findByActiveFalse();
-
-    long countByActiveTrue();
-    long countByActiveFalse();
-
-    List<Match> findByBlockedTrue();
-    List<Match> findByFrozenTrue();
-    List<Match> findByChatOpenedTrue();
-
-    // ============================================================
-    // 🔵 אישורים / התאמות הדדיות
-    // ============================================================
-
-    List<Match> findByUser1ApprovedTrueOrUser2ApprovedTrue();
-
-    List<Match> findByMutualApprovedTrue();
-    List<Match> findByMutualApprovedTrueAndActiveTrue();
-
-    List<Match>
-    findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(
-            Long user1Id,
-            Long user2Id
-    );
-
-    List<Match>
-    findByMutualApprovedTrueAndActiveTrueAndUser1IdOrMutualApprovedTrueAndActiveTrueAndUser2Id(
-            Long user1Id,
-            Long user2Id
-    );
-
-    // ============================================================
-    // 🔵 לפי משתמש + Active
+    // 🔵 שליפות לפי משתמש בודד
     // ============================================================
 
     List<Match> findByUser1IdAndActiveTrue(Long userId);
     List<Match> findByUser2IdAndActiveTrue(Long userId);
 
-    // ============================================================
-    // 🔵 לפי חתונה (meetingWeddingId)
-    // ============================================================
-
-    List<Match> findByMeetingWeddingId(Long weddingId);
-    List<Match> findByMeetingWeddingIdAndActiveTrue(Long weddingId);
-
-    List<Match> findByMeetingWeddingIdAndChatOpenedTrue(Long weddingId);
-    List<Match> findByMeetingWeddingIdAndBlockedTrue(Long weddingId);
-    List<Match> findByMeetingWeddingIdAndFrozenTrue(Long weddingId);
-
-    long countByMeetingWeddingId(Long weddingId);
-    long countByMeetingWeddingIdAndMutualApprovedTrue(Long weddingId);
-    long countByMeetingWeddingIdAndActiveTrue(Long weddingId);
-    long countByMeetingWeddingIdAndChatOpenedTrue(Long weddingId);
+    List<Match> findByUser1IdOrUser2Id(Long userId1, Long userId2);
 
     // ============================================================
-    // 🔵 ניקוד התאמה
+    // 🔵 סטטוסים (Active / Blocked / Frozen / Chat)
     // ============================================================
 
-    List<Match> findByMatchScoreGreaterThanEqual(Double minScore);
-    List<Match> findByMatchScore(Double score);
+    List<Match> findByActiveTrue();
+    List<Match> findByActiveFalse();
+
+    List<Match> findByBlockedTrue();
+    List<Match> findByFrozenTrue();
+
+    List<Match> findByChatOpenedTrue();
 
     // ============================================================
-    // 🔵 לפי מקור התאמה
+    // 🔵 Match Source (wedding / global / admin / ai)
     // ============================================================
 
     List<Match> findByMatchSource(String source);
+
     List<Match> findByMatchSourceAndActiveTrue(String source);
+
     List<Match> findByMatchSourceAndMutualApprovedTrueAndActiveTrue(String source);
 
     // ============================================================
-    // 🔵 לפי הודעות / unreadCount / זמן הודעה אחרונה
+    // 🔵 ציון התאמה (matchScore)
     // ============================================================
 
-    List<Match> findByUnreadCountGreaterThan(Integer minUnread);
+    List<Match> findByMatchScoreGreaterThanEqual(double score);
 
-    List<Match> findByLastMessageAtIsNotNullOrderByLastMessageAtDesc();
-
-    List<Match> findByLastMessageAtAfterOrderByLastMessageAtDesc(java.time.LocalDateTime time);
+    List<Match> findByMatchScore(double score);
 
     // ============================================================
-    // 🔵 לפי open-message states
+    // 🔵 חתונה — סטטיסטיקות חתונה (דרוש ל-WeddingService)
     // ============================================================
 
-    List<Match> findByFirstMessageSentTrue();
-    List<Match> findByFirstMessageSentFalse();
+    /** כל המצ'ים שהתבצעו בתוך חתונה */
+    List<Match> findByMeetingWeddingId(Long weddingId);
+
+    /** 🔥 נוספו מחדש – חובה לסטטיסטיקות חתונה */
+    long countByMeetingWeddingId(Long weddingId);
+
+    long countByMeetingWeddingIdAndMutualApprovedTrue(Long weddingId);
 
     // ============================================================
-    // 🔵 לפי "מי עוד לא קרא" – לתמיכה ב־NotificationService החדש
+    // 🔵 התאמות הדדיות לפי משתמש
     // ============================================================
 
-    List<Match> findByReadByUser1False();
-    List<Match> findByReadByUser2False();
+    List<Match> findByMutualApprovedTrueAndActiveTrueAndUser1IdOrMutualApprovedTrueAndActiveTrueAndUser2Id(
+            Long user1, Long user2
+    );
 
-    List<Match> findByInvolvesUser1AndReadByUser2False(Long user1Id);
-    List<Match> findByInvolvesUser2AndReadByUser1False(Long user2Id);
+    List<Match> findByMutualApprovedTrue();
 
+    /**
+     * כל המַצ'ים שבהם:
+     *  (user1 = userId1 AND user2Approved = true)
+     *   OR
+     *  (user2 = userId1 AND user1Approved = true)
+     *
+     * משמש ב-UserService כדי לבדוק מי אישר אותי / את מי אישרתי.
+     */
+    List<Match> findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(
+            Long userId1,
+            Long userId2
+    );
 }

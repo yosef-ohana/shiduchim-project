@@ -21,6 +21,10 @@ public class Wedding {
     @Column(nullable = false)          // חובה – אי אפשר חתונה בלי זמן התחלה
     private LocalDateTime startTime;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", nullable = false)
+    private User owner;
+
     // זמן סיום האירוע:
     // אם לא הוגדר במפורש – נגדיר 01:00 ביום שאחרי startTime
     @Column(nullable = false)          // גם חובה – נוודא ב-@PrePersist
@@ -198,4 +202,7 @@ public class Wedding {
         // null → המערכת תציג רקע ברירת מחדל
         return null;
     }
+
+    public User getOwner() { return owner; }
+    public void setOwner(User owner) { this.owner = owner; }
 }

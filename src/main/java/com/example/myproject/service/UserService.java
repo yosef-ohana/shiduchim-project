@@ -1,7 +1,18 @@
 package com.example.myproject.service;
 
-import com.example.myproject.model.*;
-import com.example.myproject.repository.*;
+import com.example.myproject.model.Match;
+import com.example.myproject.model.Notification;
+import com.example.myproject.model.NotificationType;
+import com.example.myproject.model.User;
+import com.example.myproject.model.UserAction;
+import com.example.myproject.model.UserActionCategory;
+import com.example.myproject.model.UserActionType;
+import com.example.myproject.model.Wedding;
+import com.example.myproject.repository.MatchRepository;
+import com.example.myproject.repository.NotificationRepository;
+import com.example.myproject.repository.UserActionRepository;
+import com.example.myproject.repository.UserRepository;
+import com.example.myproject.repository.WeddingRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +56,7 @@ public class UserService {
 
     // ======================================================
     // 🔹 יצירת חשבון משתמש חדש (Phone + Email חובה)
+    //   (נכון גם למי שמגיע מחתונה וגם למי שנרשם מהאתר)
     // ======================================================
 
     @Transactional
@@ -86,6 +98,11 @@ public class UserService {
         // מחיקה
         user.setDeletionRequested(false);
 
+        // רקע – ברירת מחדל (מאגר כללי)
+        user.setBackgroundMode("DEFAULT");
+        user.setActiveWeddingId(null);
+        user.setBackgroundWeddingId(null);
+
         // זמנים
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
@@ -106,7 +123,6 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
 
         // NOTE: שליחת SMS אמיתית תיעשה בשירות חיצוני
-
         userRepository.save(user);
     }
 
@@ -123,7 +139,6 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
 
         // NOTE: שליחת Email אמיתי תיעשה בשירות חיצוני
-
         userRepository.save(user);
     }
 
@@ -288,11 +303,10 @@ public class UserService {
         return userRepository.findById(id);
     }
 
-
     // ======================================================
-//      UserService – Part 2/3
-//      Profile + Preferences + Global Pool
-// ======================================================
+    //      UserService – Part 2/3
+    //      Profile + Preferences + Global Pool + Background
+    // ======================================================
 
     // ======================================================
     // 🔹 עדכון פרופיל בסיסי (Basic Profile)
@@ -442,6 +456,7 @@ public class UserService {
 
     // ======================================================
     // 🔹 בקשת גישה למאגר הגלובלי (request)
+    //     (כללי ברזל: חייב פרופיל מלא + תמונה ראשית)
     // ======================================================
 
     @Transactional
@@ -455,27 +470,60 @@ public class UserService {
         user.setGlobalAccessRequest(true);
         user.setUpdatedAt(LocalDateTime.now());
 
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+
+        // התראה למשתמש – בקשה התקבלה
+        createSimpleNotification(
+                saved,
+                NotificationType.GLOBAL_ACCESS_REQUESTED,
+                "הבקשה למאגר הכללי התקבלה",
+                "הבקשה שלך למאגר הכללי התקבלה ותטופל ע״י מנהל המערכת."
+        );
+
+        return saved;
     }
 
     // ======================================================
     // 🔹 אישור גישה גלובלית ע"י מנהל (approve)
+    //     (אפיון 2025: בלי fullProfileCompleted + תמונה — אין מאגר כללי)
     // ======================================================
 
     @Transactional
     public User approveGlobalAccess(Long userId) {
         User user = getUserOrThrow(userId);
 
+        if (!user.isFullProfileCompleted() || !user.isHasPrimaryPhoto()) {
+            throw new IllegalStateException("אי אפשר לאשר מאגר כללי למשתמש בלי פרופיל מלא + תמונה ראשית.");
+        }
+
         user.setGlobalAccessApproved(true);
         user.setGlobalAccessRequest(false);
-        user.setInGlobalPool(true); // נכנס רשמית למאגר
+        user.setInGlobalPool(true); // נכנס רשמית למאגר (ואין יציאה – כלל "תמיד גלובלי")
         user.setUpdatedAt(LocalDateTime.now());
 
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+
+        // התראה על אישור
+        createSimpleNotification(
+                saved,
+                NotificationType.GLOBAL_ACCESS_APPROVED,
+                "אושרת למאגר הכללי",
+                "הפרופיל שלך אושר למאגר הכללי."
+        );
+
+        // התראה על כניסה רשמית למאגר
+        createSimpleNotification(
+                saved,
+                NotificationType.ENTERED_GLOBAL_POOL,
+                "נכנסת למאגר השידוכים הכללי",
+                "הפרופיל שלך מופיע כעת במאגר הכללי לזיווגים."
+        );
+
+        return saved;
     }
 
     // ======================================================
-    // 🔹 שליפת משתמשים עם מאגר גלובלי
+    // 🔹 שליפת משתמשים במאגר הגלובלי
     // ======================================================
 
     @Transactional(readOnly = true)
@@ -504,10 +552,79 @@ public class UserService {
     }
 
     // ======================================================
-//      UserService – Part 3/3
-//      Likes / Freeze / Dislike / Match Logic
-// ======================================================
+    // 🔹 ספירת צפיות בפרופיל (לתמיכה ב־PROFILE_VIEWS_SUMMARY)
+    // ======================================================
 
+    @Transactional
+    public void incrementProfileViews(Long viewedUserId) {
+        User target = getUserOrThrow(viewedUserId);
+        Integer current = target.getProfileViewsCount();
+        if (current == null) current = 0;
+        target.setProfileViewsCount(current + 1);
+        target.setUpdatedAt(LocalDateTime.now());
+        userRepository.save(target);
+    }
+
+    // ======================================================
+    // 🔹 מצב חתונה / רקע (Wedding Mode vs Global)
+    //     לפי האפיון:
+    //     • ב-WEDDING → רקע מהחתונה
+    //     • ב-DEFAULT → רקע ברירת מחדל
+    // ======================================================
+
+    @Transactional
+    public User enterWeddingMode(Long userId, Long weddingId) {
+
+        User user = getUserOrThrow(userId);
+
+        Wedding wedding = weddingRepository.findById(weddingId)
+                .orElseThrow(() -> new IllegalArgumentException("חתונה לא נמצאה"));
+
+        user.setActiveWeddingId(wedding.getId());
+        user.setBackgroundWeddingId(wedding.getId());
+        user.setBackgroundMode("WEDDING");
+
+        user.setWeddingEntryAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+
+        User saved = userRepository.save(user);
+
+        // התראה אופציונלית – כניסה לחתונה (אפשר גם לכבות בעתיד אם לא תרצה)
+        createSimpleNotification(
+                saved,
+                NotificationType.WEDDING_ENTRY,
+                "נכנסת לחתונה",
+                "אתה כרגע במצב חתונה: " + wedding.getName()
+        );
+
+        return saved;
+    }
+
+    @Transactional
+    public User exitWeddingMode(Long userId) {
+
+        User user = getUserOrThrow(userId);
+
+        user.setActiveWeddingId(null);
+        user.setBackgroundWeddingId(null);
+        user.setBackgroundMode("DEFAULT");
+
+        user.setWeddingExitAt(LocalDateTime.now());
+        user.setUpdatedAt(LocalDateTime.now());
+
+        return userRepository.save(user);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isInWeddingMode(Long userId) {
+        User user = getUserOrThrow(userId);
+        return user.getActiveWeddingId() != null;
+    }
+
+    // ======================================================
+    //      UserService – Part 3/3
+    //      Likes / Freeze / Dislike / Match Logic
+    // ======================================================
 
     // ======================================================
     // 🔹 פעולה מרכזית: ביצוע פעולה על משתמש אחר
@@ -535,18 +652,21 @@ public class UserService {
             case DISLIKE -> {
                 createBasicAction(actor, target, UserActionType.DISLIKE,
                         UserActionCategory.SOCIAL, weddingId, "User disliked");
+                // התראה אופציונלית בעתיד (USER_DISLIKED)
                 yield "DISLIKE_OK";
             }
 
             case FREEZE -> {
                 createBasicAction(actor, target, UserActionType.FREEZE,
                         UserActionCategory.SOCIAL, weddingId, "User froze");
+                // התראה אופציונלית (USER_FROZEN)
                 yield "FREEZE_OK";
             }
 
             case UNFREEZE -> {
                 createBasicAction(actor, target, UserActionType.UNFREEZE,
                         UserActionCategory.SOCIAL, weddingId, "User unfreezed");
+                // התראה אופציונלית (USER_UNFROZEN)
                 yield "UNFREEZE_OK";
             }
 
@@ -554,6 +674,9 @@ public class UserService {
         };
     }
 
+    // ======================================================
+    // 🔹 יצירת Notification פשוט
+    // ======================================================
 
     private void createSimpleNotification(User user,
                                           NotificationType type,
@@ -571,18 +694,17 @@ public class UserService {
         notificationRepository.save(n);
     }
 
-
     // ======================================================
-    // 🔹 לייק — הטיפול המלא
+    // 🔹 לייק — הטיפול המלא (כולל יצירת Match)
     // ======================================================
 
     private String handleLikeInteraction(User actor,
                                          User target,
                                          Long weddingId) {
 
-        // פעולה: LIKE
+        // פעולה: LIKE (סושיאל – לפי האפיון)
         createBasicAction(actor, target,
-                UserActionType.LIKE, UserActionCategory.MATCH,
+                UserActionType.LIKE, UserActionCategory.SOCIAL,
                 weddingId, "User liked");
 
         // האם target כבר עשה לייק על actor?
@@ -591,6 +713,13 @@ public class UserService {
                         target, actor, UserActionType.LIKE);
 
         if (reciprocal == null) {
+            // נשלח התראה ל-target שהוא קיבל לייק (אופציונלי)
+            createSimpleNotification(
+                    target,
+                    NotificationType.LIKE_RECEIVED,
+                    "קיבלת לייק חדש",
+                    actor.getFullName() + " התעניין בך."
+            );
             return "LIKE_WAITING";        // עדיין אין הדדיות
         }
 
@@ -604,7 +733,7 @@ public class UserService {
 
         updateMatchApprovalState(match, actor);
 
-        // לוג פעולה: LIKE_BACK
+        // לוג פעולה: LIKE_BACK (כבר ברמת MATCH)
         createBasicAction(actor, target,
                 UserActionType.LIKE_BACK, UserActionCategory.MATCH,
                 weddingId, "Mutual like formed");
@@ -617,7 +746,6 @@ public class UserService {
         return "MATCH_MUTUAL";
     }
 
-
     // ======================================================
     // 🔹 יצירת Match חדש
     // ======================================================
@@ -628,17 +756,17 @@ public class UserService {
                 u1,
                 u2,
                 weddingId,   // meetingWeddingId – באיזו חתונה נוצר המץ'
-                weddingId,   // originWeddingId – איפה הכירו לראשונה (בשלב זה זו אותה חתונה)
-                50.0,        // ניקוד בסיסי
+                weddingId,   // originWeddingId – איפה נפגשו לראשונה
+                50.0,        // ניקוד בסיסי (בהמשך אפשר לחשב דינמית)
                 "wedding"    // מקור המץ'
         );
 
-        match.setUser1Approved(true);       // היוזר ששם לייק ראשון
-        match.setUser2Approved(false);      // השני יאשר כשיעשה לייק/אישור
+        // היוזר הנוכחי הוא זה ששם לייק (user1 מאושר)
+        match.setUser1Approved(true);
+        match.setUser2Approved(false);
 
         return matchRepository.save(match);
     }
-
 
     // ======================================================
     // 🔹 עדכון אישורי Match לאחר לייק הדדי
@@ -659,10 +787,24 @@ public class UserService {
         matchRepository.save(match);
     }
 
+    // ======================================================
+    // 🔹 מיפוי שם רשימה לפי סוג פעולה (listName)
+    //     (תומך ברשימות 1–5 מהאפיון – LIKE / DISLIKE / FREEZE)
+    // ======================================================
+
+    private String deriveListName(UserActionType type) {
+        return switch (type) {
+            case LIKE, LIKE_BACK -> "LIKE";
+            case DISLIKE -> "DISLIKE";
+            case FREEZE, UNFREEZE -> "FREEZE";
+            default -> null;
+        };
+    }
 
     // ======================================================
     // 🔹 יצירת פעולה בסיסית (UserAction)
-// ======================================================
+    //      כולל listName לפי הרשימות באפיון
+    // ======================================================
 
     private UserAction createBasicAction(User actor,
                                          User target,
@@ -677,21 +819,21 @@ public class UserService {
                 type,
                 category,
                 weddingId,       // wedding context
-                weddingId,       // originWeddingId — נזהה איפה נפגשו
-                null,            // matchId (יתווסף רק אחרי התאמה)
-                null,            // actionGroup
+                weddingId,       // originWeddingId — בשלב זה אותה חתונה
+                null,            // matchId (ניתן לעדכן בהמשך אם צריך)
+                null,            // actionGroupId
                 "user",          // מקור — משתמש רגיל
                 false,           // autoGenerated
-                metadata
+                metadata,
+                deriveListName(type) // ⭐ שם רשימה
         );
 
         return userActionRepository.save(action);
     }
 
-
     // ======================================================
     // 🔹 נטרול פעולות קודמות (למניעת התנגשות)
-// ======================================================
+    // ======================================================
 
     private void deactivatePreviousActions(User actor, User target) {
         List<UserAction> previous = userActionRepository.findByActorAndTarget(actor, target);
@@ -710,19 +852,68 @@ public class UserService {
             userActionRepository.saveAll(previous);
     }
 
-
     // ======================================================
-    // 🔹 רשימות לייקים / קפואים / לא מעוניין
+    // 🔹 רשימות 1–5 לפי האפיון
+    //     1. אני עשיתי להם לייק
+    //     2. הם שמו לי לייק ומחכים לתגובה
+    //     3. התאמות הדדיות – getMutualMatches
+    //     4. לא מעוניין (DISLIKE)
+    //     5. מקפיאים (FREEZE)
     // ======================================================
 
+    // 1️⃣ "אנשים שאני עשיתי להם לייק"
     @Transactional(readOnly = true)
-    public List<UserAction> getPendingLikes(Long userId) {
+    public List<UserAction> getUsersILiked(Long userId) {
         User me = getUserOrThrow(userId);
-        return userActionRepository.findByTargetAndActionTypeAndActiveTrue(
+        return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.LIKE
         );
     }
 
+    // 2️⃣ "אנשים ששמו לי לייק ומחכים לתגובה ממני"
+    @Transactional(readOnly = true)
+    public List<UserAction> getUsersWhoLikedMeAndWaitingForMyResponse(Long userId) {
+        User me = getUserOrThrow(userId);
+
+        // כל הלייקים הפעילים עליי
+        List<UserAction> likesOnMe =
+                userActionRepository.findByTargetAndActionTypeAndActiveTrue(
+                        me, UserActionType.LIKE
+                );
+
+        // מסננים רק כאלה שאין ממני פעולה ברורה (LIKE / DISLIKE / FREEZE) כלפיהם
+        return likesOnMe.stream()
+                .filter(action -> {
+                    User actor = action.getActor();
+
+                    // הפעולה האחרונה שביצעתי כלפיו
+                    UserAction lastFromMeToHim =
+                            userActionRepository.findTopByActorAndTargetOrderByCreatedAtDesc(
+                                    me, actor
+                            );
+
+                    if (lastFromMeToHim == null) {
+                        // לא עשיתי עליו כלום → מחכה לתגובה
+                        return true;
+                    }
+
+                    UserActionType t = lastFromMeToHim.getActionType();
+
+                    // אם כבר סימנתי LIKE / DISLIKE / FREEZE – הוא לא "ממתין"
+                    return !(t == UserActionType.LIKE
+                            || t == UserActionType.DISLIKE
+                            || t == UserActionType.FREEZE);
+                })
+                .toList();
+    }
+
+    // לשמירה אחורה על השם הקיים – ממפה לרשימה 2
+    @Transactional(readOnly = true)
+    public List<UserAction> getPendingLikes(Long userId) {
+        return getUsersWhoLikedMeAndWaitingForMyResponse(userId);
+    }
+
+    // 5️⃣ "מקפיא" – FREEZE
     @Transactional(readOnly = true)
     public List<UserAction> getFrozenUsers(Long userId) {
         User me = getUserOrThrow(userId);
@@ -731,6 +922,7 @@ public class UserService {
         );
     }
 
+    // 4️⃣ "לא מעוניין" – DISLIKE
     @Transactional(readOnly = true)
     public List<UserAction> getDislikedUsers(Long userId) {
         User me = getUserOrThrow(userId);
@@ -738,7 +930,6 @@ public class UserService {
                 me, UserActionType.DISLIKE
         );
     }
-
 
     // ======================================================
     // 🔹 התאמות הדדיות — Matches
@@ -760,7 +951,6 @@ public class UserService {
                 .toList();
     }
 
-
     // ======================================================
     // 🔹 התאמות שממתינות לאישור שלי
     // ======================================================
@@ -770,44 +960,5 @@ public class UserService {
 
         return matchRepository
                 .findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(userId, userId);
-    }
-
-    @Transactional
-    public User enterWeddingMode(Long userId, Long weddingId) {
-
-        User user = getUserOrThrow(userId);
-
-        Wedding wedding = weddingRepository.findById(weddingId)
-                .orElseThrow(() -> new IllegalArgumentException("חתונה לא נמצאה"));
-
-        user.setActiveWeddingId(wedding.getId());
-        user.setBackgroundWeddingId(wedding.getId());
-        user.setBackgroundMode("WEDDING");
-
-        user.setWeddingEntryAt(LocalDateTime.now());
-        user.setUpdatedAt(LocalDateTime.now());
-
-        return userRepository.save(user);
-    }
-
-    @Transactional
-    public User exitWeddingMode(Long userId) {
-
-        User user = getUserOrThrow(userId);
-
-        user.setActiveWeddingId(null);
-        user.setBackgroundWeddingId(null);
-        user.setBackgroundMode("DEFAULT");
-
-        user.setWeddingExitAt(LocalDateTime.now());
-        user.setUpdatedAt(LocalDateTime.now());
-
-        return userRepository.save(user);
-    }
-
-    @Transactional(readOnly = true)
-    public boolean isInWeddingMode(Long userId) {
-        User user = getUserOrThrow(userId);
-        return user.getActiveWeddingId() != null;
     }
 }

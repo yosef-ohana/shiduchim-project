@@ -1,122 +1,120 @@
-package com.example.myproject.repository;                        // ריפו יוזר
+package com.example.myproject.repository;
 
-import com.example.myproject.model.User;                          // ישות User
-import org.springframework.data.jpa.repository.JpaRepository;      // בסיס JPA
-import org.springframework.data.jpa.repository.Query;              // לשאילתות מותאמות
-import org.springframework.stereotype.Repository;                  // מסמן כריפו
+import com.example.myproject.model.User;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository                                                       // ריפוזיטורי JPA
+@Repository
 public interface UserRepository extends JpaRepository<User, Long> {
 
     // ===============================
     // 🔵 זיהוי משתמשים
     // ===============================
 
-    Optional<User> findByPhone(String phone);                     // לפי טלפון
-    Optional<User> findByEmail(String email);                     // לפי אימייל
-    Optional<User> findById(Long id);                             // לפי מזהה
+    Optional<User> findByPhone(String phone);
+    Optional<User> findByEmail(String email);
+    Optional<User> findById(Long id);
 
-    boolean existsByPhone(String phone);                          // האם טלפון קיים
-    boolean existsByEmail(String email);                          // האם אימייל קיים
+    boolean existsByPhone(String phone);
+    boolean existsByEmail(String email);
 
 
     // ===============================
     // 🔵 אימות חשבון
     // ===============================
 
-    List<User> findByVerifiedTrue();                              // מאומתים
-    List<User> findByVerifiedFalse();                             // לא מאומתים
+    List<User> findByVerifiedTrue();
+    List<User> findByVerifiedFalse();
 
 
     // ===============================
     // 🔵 פרופיל בסיסי / מלא
     // ===============================
 
-    List<User> findByBasicProfileCompletedTrue();                 // השלים בסיסי
-    List<User> findByFullProfileCompletedTrue();                  // השלים מלא
+    List<User> findByBasicProfileCompletedTrue();
+    List<User> findByFullProfileCompletedTrue();
 
-    // --- חדשים: פרופיל + תמונה ראשית חובה ---
     @Query("SELECT u FROM User u WHERE u.fullProfileCompleted = true AND u.hasPrimaryPhoto = true")
-    List<User> findCompletedFullProfileWithPhoto();               // השלים מלא + תמונה ראשית
+    List<User> findCompletedFullProfileWithPhoto();
 
     @Query("SELECT u FROM User u WHERE u.basicProfileCompleted = true AND u.hasPrimaryPhoto = true")
-    List<User> findCompletedBasicProfileWithPhoto();              // בסיסי + תמונה ראשית
+    List<User> findCompletedBasicProfileWithPhoto();
 
 
     // ===============================
     // 🔵 מאגר גלובלי
     // ===============================
 
-    List<User> findByInGlobalPoolTrue();                          // במאגר גלובלי
-    List<User> findByGlobalAccessRequestTrue();                   // ביקש גישה
-    List<User> findByGlobalAccessApprovedTrue();                  // אושר
+    List<User> findByInGlobalPoolTrue();
+    List<User> findByGlobalAccessRequestTrue();
+    List<User> findByGlobalAccessApprovedTrue();
 
     @Query("SELECT u FROM User u WHERE u.inGlobalPool = true AND u.hasPrimaryPhoto = true")
-    List<User> findEligibleForGlobalPool();                       // מוכן לגלובלי (לפי חוקי האפיון)
+    List<User> findEligibleForGlobalPool();
 
 
     // ===============================
-    // 🔵 חתונות (Wedding Context)
+    // 🔵 חתונות — Wedding Context
     // ===============================
 
     List<User> findByBackgroundWeddingId(Long weddingId);
-    // --- משתמש שהיה אי פעם בחתונה (List<Long>) ---
+
     @Query("SELECT u FROM User u WHERE :weddingId MEMBER OF u.weddingsHistory")
-    List<User> findUsersWhoAttendedWedding(Long weddingId);       // אופטימלי ונכון ל־JPA
+    List<User> findUsersWhoAttendedWedding(Long weddingId);
 
-    List<User> findByFirstWeddingId(Long weddingId);              // החתונה הראשונה שלו
-    List<User> findByLastWeddingId(Long weddingId);               // החתונה האחרונה שלו
+    List<User> findByFirstWeddingId(Long weddingId);
+    List<User> findByLastWeddingId(Long weddingId);
 
-    // --- משתמשים עם הרשאת צפייה בחתונה ---
-    List<User> findByCanViewWeddingTrue();                        // יכול לראות את חתונה הנוכחית
+    List<User> findByCanViewWeddingTrue();
 
 
     // ===============================
     // 🔵 הרשאות מערכת / בעלי אירוע
     // ===============================
 
-    List<User> findByAdminTrue();                                 // מנהלי מערכת
+    List<User> findByAdminTrue();
+    List<User> findByEventManagerTrue();
 
-    List<User> findByEventManagerTrue();                          // בעלי אירועים
-
-    List<User> findByEventOwnerForWeddingId(Long weddingId);      // בעל אירוע לפי חתונה
+    // ❌ נמחק — כי אינו קיים ב־User ואינו מופיע באפיון 2025
+    // List<User> findByEventOwnerForWeddingId(Long weddingId);
 
 
     // ===============================
     // 🔵 התראות
     // ===============================
 
-    List<User> findByAllowInAppNotificationsTrue();               // מאפשר התראות In-App
-    List<User> findByAllowEmailNotificationsTrue();               // מאפשר מייל
-    List<User> findByAllowSmsNotificationsTrue();                 // מאפשר SMS
+    List<User> findByAllowInAppNotificationsTrue();
+    List<User> findByAllowEmailNotificationsTrue();
+    List<User> findByAllowSmsNotificationsTrue();
 
 
     // ===============================
     // 🔵 מחיקת חשבון
     // ===============================
 
-    List<User> findByDeletionRequestedTrue();                     // ביקש מחיקה
+    List<User> findByDeletionRequestedTrue();
 
 
     // ===============================
     // 🔵 חיפוש (Admin Dashboard)
     // ===============================
 
-    List<User> findByFullNameContainingIgnoreCase(String name);       // לפי שם
-    List<User> findByAreaOfResidenceContainingIgnoreCase(String area);// אזור
-    List<User> findByOccupationContainingIgnoreCase(String occ);      // עיסוק
-    List<User> findByEducationContainingIgnoreCase(String edu);       // השכלה
-    List<User> findByOriginContainingIgnoreCase(String origin);       // מוצא
-    List<User> findByGender(String gender);                           // מגדר
+    List<User> findByFullNameContainingIgnoreCase(String name);
+    List<User> findByAreaOfResidenceContainingIgnoreCase(String area);
+    List<User> findByOccupationContainingIgnoreCase(String occ);
+    List<User> findByEducationContainingIgnoreCase(String edu);
+    List<User> findByOriginContainingIgnoreCase(String origin);
+    List<User> findByGender(String gender);
 
 
     // ===============================
     // 🔵 AI / ML תמיכה
     // ===============================
 
-    List<User> findByAiEmbeddingIsNotNull();                        // יש embedding
-    List<User> findByAiMatchBoostScoreGreaterThan(Double score);     // בוסט AI
+    List<User> findByAiEmbeddingIsNotNull();
+    List<User> findByAiMatchBoostScoreGreaterThan(Double score);
 }

@@ -1,436 +1,555 @@
 package com.example.myproject.controller;
 
+import com.example.myproject.model.Match;
 import com.example.myproject.model.User;
+import com.example.myproject.model.UserAction;
+import com.example.myproject.model.UserActionType;
+import com.example.myproject.model.Wedding;
+import com.example.myproject.repository.UserRepository;
+import com.example.myproject.repository.WeddingRepository;
 import com.example.myproject.service.UserService;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
-/**
- * UserController
- * חשיפה של כל הפעולות העיקריות על משתמשים כ-REST API.
- */
 @RestController
 @RequestMapping("/api/users")
+@CrossOrigin(origins = "*")
 public class UserController {
 
-    private final UserService userService; // שכבת שירות לניהול משתמשים
+    private final UserService userService;
+    private final UserRepository userRepository;
+    private final WeddingRepository weddingRepository;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService,
+                          UserRepository userRepository,
+                          WeddingRepository weddingRepository) {
         this.userService = userService;
+        this.userRepository = userRepository;
+        this.weddingRepository = weddingRepository;
     }
 
-    // ----------------------------------------------------
-    // 1. רישום, אימות, התחברות
-    // ----------------------------------------------------
+    // ============================================================
+    // 🔵 DTO פנימיים – Request Bodies
+    // ============================================================
 
-    /**
-     * רישום משתמש חדש (פרטים בסיסיים).
-     */
-    @PostMapping("/register")
-    public User register(@RequestBody RegisterRequest request) {
-        return userService.registerUser(
-                request.getFullName(),
-                request.getPhone(),
-                request.getEmail(),
-                request.getGender()
-        );
-    }
-
-    /**
-     * בקשת קוד אימות מחדש ב-SMS (לפי טלפון).
-     */
-    @PostMapping("/verification/sms")
-    public ResponseEntity<Void> requestSmsCode(@RequestBody PhoneRequest request) {
-        userService.requestSmsVerificationCode(request.getPhone());
-        return ResponseEntity.ok().build();
-    }
-
-    /**
-     * בקשת קוד אימות מחדש באימייל (לפי אימייל).
-     */
-    @PostMapping("/verification/email")
-    public ResponseEntity<Void> requestEmailCode(@RequestBody EmailRequest request) {
-        userService.requestEmailVerificationCode(request.getEmail());
-        return ResponseEntity.ok().build();
-    }
-
-    /**
-     * אימות משתמש לפי טלפון + קוד.
-     */
-    @PostMapping("/verify/phone")
-    public User verifyByPhone(@RequestBody VerifyPhoneRequest request) {
-        return userService.verifyByPhone(request.getPhone(), request.getCode());
-    }
-
-    /**
-     * אימות משתמש לפי אימייל + קוד.
-     */
-    @PostMapping("/verify/email")
-    public User verifyByEmail(@RequestBody VerifyEmailRequest request) {
-        return userService.verifyByEmail(request.getEmail(), request.getCode());
-    }
-
-    /**
-     * "התחברות" לפי טלפון / אימייל.
-     */
-    @PostMapping("/login")
-    public User login(@RequestBody LoginRequest request) {
-        return userService.loginByPhoneOrEmail(request.getIdentifier());
-    }
-
-    // ----------------------------------------------------
-    // 2. שליפה בסיסית של משתמשים
-    // ----------------------------------------------------
-
-    /**
-     * הבאת פרטי משתמש לפי ID.
-     */
-    @GetMapping("/{id}")
-    public ResponseEntity<User> getUser(@PathVariable Long id) {
-        Optional<User> userOpt = userService.getUserById(id);
-        return userOpt.map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.notFound().build());
-    }
-
-    /**
-     * כל המשתמשים שבמאגר הכללי.
-     */
-    @GetMapping("/global-pool")
-    public List<User> getGlobalPoolUsers() {
-        return userService.getGlobalPoolUsers();
-    }
-
-    // ----------------------------------------------------
-    // 3. פרופיל בסיסי + מלא
-    // ----------------------------------------------------
-
-    /**
-     * עדכון פרופיל בסיסי של משתמש.
-     */
-    @PutMapping("/{id}/basic-profile")
-    public User updateBasicProfile(@PathVariable Long id,
-                                   @RequestBody BasicProfileRequest request) {
-
-        return userService.updateBasicProfile(
-                id,
-                request.getFullName(),
-                request.getAge(),
-                request.getHeightCm(),
-                request.getAreaOfResidence(),
-                request.getReligiousLevel()
-        );
-    }
-
-    /**
-     * עדכון פרופיל מלא של משתמש.
-     */
-    @PutMapping("/{id}/full-profile")
-    public User updateFullProfile(@PathVariable Long id,
-                                  @RequestBody FullProfileRequest request) {
-
-        return userService.updateFullProfile(
-                id,
-                request.getBodyType(),
-                request.getOccupation(),
-                request.getEducation(),
-                request.getMilitaryService(),
-                request.getMaritalStatus(),
-                request.getOrigin(),
-                request.getPersonalityTraits(),
-                request.getHobbies(),
-                request.getFamilyDescription(),
-                request.getLookingFor(),
-                request.getPreferredAgeFrom(),
-                request.getPreferredAgeTo(),
-                request.getHeadCovering(),
-                request.getHasDrivingLicense(),
-                request.getSmokes(),
-                request.getInquiriesPhone1(),
-                request.getInquiriesPhone2()
-        );
-    }
-
-    // ----------------------------------------------------
-    // 4. העדפות התראות
-    // ----------------------------------------------------
-
-    /**
-     * עדכון העדפות התראות (In-App, Email, SMS).
-     */
-    @PutMapping("/{id}/notification-preferences")
-    public User updateNotificationPreferences(@PathVariable Long id,
-                                              @RequestBody NotificationPrefsRequest request) {
-
-        return userService.updateNotificationPreferences(
-                id,
-                request.isAllowInApp(),
-                request.isAllowEmail(),
-                request.isAllowSms()
-        );
-    }
-
-    // ----------------------------------------------------
-    // 5. מאגר כללי + גישה גלובלית
-    // ----------------------------------------------------
-
-    /**
-     * עדכון סטטוס מאגר כללי (כניסה/יציאה).
-     */
-    @PutMapping("/{id}/global-pool")
-    public User updateGlobalPool(@PathVariable Long id,
-                                 @RequestBody GlobalPoolRequest request) {
-
-        return userService.updateGlobalPoolStatus(id, request.isInGlobalPool());
-    }
-
-    /**
-     * בקשת גישה גלובלית (שדה globalAccessRequest=true).
-     */
-    @PostMapping("/{id}/request-global")
-    public User requestGlobalAccess(@PathVariable Long id) {
-        return userService.requestGlobalAccess(id);
-    }
-
-    /**
-     * אישור גישה גלובלית (שדה globalAccessApproved=true).
-     * בפועל ייקרא ע"י ממשק מנהל.
-     */
-    @PostMapping("/{id}/approve-global")
-    public User approveGlobalAccess(@PathVariable Long id) {
-        return userService.approveGlobalAccess(id);
-    }
-
-    // ----------------------------------------------------
-    // 6. מחיקת חשבון
-    // ----------------------------------------------------
-
-    /**
-     * בקשה למחיקת חשבון (soft delete – 30 יום).
-     */
-    @PostMapping("/{id}/request-deletion")
-    public ResponseEntity<Void> requestAccountDeletion(@PathVariable Long id) {
-        userService.requestAccountDeletion(id);
-        return ResponseEntity.ok().build();
-    }
-
-    /**
-     * ביטול בקשת מחיקת חשבון.
-     */
-    @PostMapping("/{id}/cancel-deletion")
-    public ResponseEntity<Void> cancelAccountDeletion(@PathVariable Long id) {
-        userService.cancelAccountDeletion(id);
-        return ResponseEntity.ok().build();
-    }
-
-    /**
-     * הרצה ידנית של Purge – מחיקה פיזית של חשבונות שעברו 30 יום.
-     * (למנהל מערכת / CRON).
-     */
-    @PostMapping("/purge-deleted")
-    public ResponseEntity<Void> purgeDeleted() {
-        userService.purgeDeletedUsersOlderThan30Days();
-        return ResponseEntity.ok().build();
-    }
-
-    // ----------------------------------------------------
-    // 7. תזכורת להשלים פרופיל
-    // ----------------------------------------------------
-
-    /**
-     * שליחת תזכורת למשתמש להשלים פרופיל.
-     */
-    @PostMapping("/{id}/profile-reminder")
-    public ResponseEntity<Void> sendProfileReminder(@PathVariable Long id) {
-        userService.sendProfileIncompleteReminderIfNeeded(id);
-        return ResponseEntity.ok().build();
-    }
-
-    // ====================================================
-    //             DTO פנימיים לבקשות JSON
-    // ====================================================
-
-    // --- רישום משתמש חדש ---
-    public static class RegisterRequest {
-        private String fullName;
-        private String phone;
-        private String email;
-        private String gender;
-
-        public String getFullName() { return fullName; }
-        public void setFullName(String fullName) { this.fullName = fullName; }
-
-        public String getPhone() { return phone; }
-        public void setPhone(String phone) { this.phone = phone; }
-
-        public String getEmail() { return email; }
-        public void setEmail(String email) { this.email = email; }
-
-        public String getGender() { return gender; }
-        public void setGender(String gender) { this.gender = gender; }
-    }
-
-    // --- בקשות פשוטות: טלפון / אימייל / לוגין ---
-    public static class PhoneRequest {
-        private String phone;
-        public String getPhone() { return phone; }
-        public void setPhone(String phone) { this.phone = phone; }
-    }
-
-    public static class EmailRequest {
-        private String email;
-        public String getEmail() { return email; }
-        public void setEmail(String email) { this.email = email; }
+    public static class CreateUserRequest {
+        public String fullName;
+        public String phone;
+        public String email;
+        public String gender;
     }
 
     public static class LoginRequest {
-        private String identifier;
-        public String getIdentifier() { return identifier; }
-        public void setIdentifier(String identifier) { this.identifier = identifier; }
+        public String phoneOrEmail;
     }
 
-    // --- אימות קוד ---
-    public static class VerifyPhoneRequest {
-        private String phone;
-        private String code;
-
-        public String getPhone() { return phone; }
-        public void setPhone(String phone) { this.phone = phone; }
-
-        public String getCode() { return code; }
-        public void setCode(String code) { this.code = code; }
+    public static class PhoneVerificationRequest {
+        public String phone;
+        public String code;
     }
 
-    public static class VerifyEmailRequest {
-        private String email;
-        private String code;
-
-        public String getEmail() { return email; }
-        public void setEmail(String email) { this.email = email; }
-
-        public String getCode() { return code; }
-        public void setCode(String code) { this.code = code; }
+    public static class EmailVerificationRequest {
+        public String email;
+        public String code;
     }
 
-    // --- פרופיל בסיסי ---
     public static class BasicProfileRequest {
-        private String fullName;
-        private Integer age;
-        private Integer heightCm;
-        private String areaOfResidence;
-        private String religiousLevel;
-
-        public String getFullName() { return fullName; }
-        public void setFullName(String fullName) { this.fullName = fullName; }
-
-        public Integer getAge() { return age; }
-        public void setAge(Integer age) { this.age = age; }
-
-        public Integer getHeightCm() { return heightCm; }
-        public void setHeightCm(Integer heightCm) { this.heightCm = heightCm; }
-
-        public String getAreaOfResidence() { return areaOfResidence; }
-        public void setAreaOfResidence(String areaOfResidence) { this.areaOfResidence = areaOfResidence; }
-
-        public String getReligiousLevel() { return religiousLevel; }
-        public void setReligiousLevel(String religiousLevel) { this.religiousLevel = religiousLevel; }
+        public String fullName;
+        public Integer age;
+        public Integer heightCm;
+        public String areaOfResidence;
+        public String religiousLevel;
     }
 
-    // --- פרופיל מלא ---
     public static class FullProfileRequest {
-        private String bodyType;
-        private String occupation;
-        private String education;
-        private String militaryService;
-        private String maritalStatus;
-        private String origin;
-        private String personalityTraits;
-        private String hobbies;
-        private String familyDescription;
-        private String lookingFor;
-        private Integer preferredAgeFrom;
-        private Integer preferredAgeTo;
-        private String headCovering;
-        private Boolean hasDrivingLicense;
-        private Boolean smokes;
-        private String inquiriesPhone1;
-        private String inquiriesPhone2;
-
-        public String getBodyType() { return bodyType; }
-        public void setBodyType(String bodyType) { this.bodyType = bodyType; }
-
-        public String getOccupation() { return occupation; }
-        public void setOccupation(String occupation) { this.occupation = occupation; }
-
-        public String getEducation() { return education; }
-        public void setEducation(String education) { this.education = education; }
-
-        public String getMilitaryService() { return militaryService; }
-        public void setMilitaryService(String militaryService) { this.militaryService = militaryService; }
-
-        public String getMaritalStatus() { return maritalStatus; }
-        public void setMaritalStatus(String maritalStatus) { this.maritalStatus = maritalStatus; }
-
-        public String getOrigin() { return origin; }
-        public void setOrigin(String origin) { this.origin = origin; }
-
-        public String getPersonalityTraits() { return personalityTraits; }
-        public void setPersonalityTraits(String personalityTraits) { this.personalityTraits = personalityTraits; }
-
-        public String getHobbies() { return hobbies; }
-        public void setHobbies(String hobbies) { this.hobbies = hobbies; }
-
-        public String getFamilyDescription() { return familyDescription; }
-        public void setFamilyDescription(String familyDescription) { this.familyDescription = familyDescription; }
-
-        public String getLookingFor() { return lookingFor; }
-        public void setLookingFor(String lookingFor) { this.lookingFor = lookingFor; }
-
-        public Integer getPreferredAgeFrom() { return preferredAgeFrom; }
-        public void setPreferredAgeFrom(Integer preferredAgeFrom) { this.preferredAgeFrom = preferredAgeFrom; }
-
-        public Integer getPreferredAgeTo() { return preferredAgeTo; }
-        public void setPreferredAgeTo(Integer preferredAgeTo) { this.preferredAgeTo = preferredAgeTo; }
-
-        public String getHeadCovering() { return headCovering; }
-        public void setHeadCovering(String headCovering) { this.headCovering = headCovering; }
-
-        public Boolean getHasDrivingLicense() { return hasDrivingLicense; }
-        public void setHasDrivingLicense(Boolean hasDrivingLicense) { this.hasDrivingLicense = hasDrivingLicense; }
-
-        public Boolean getSmokes() { return smokes; }
-        public void setSmokes(Boolean smokes) { this.smokes = smokes; }
-
-        public String getInquiriesPhone1() { return inquiriesPhone1; }
-        public void setInquiriesPhone1(String inquiriesPhone1) { this.inquiriesPhone1 = inquiriesPhone1; }
-
-        public String getInquiriesPhone2() { return inquiriesPhone2; }
-        public void setInquiriesPhone2(String inquiriesPhone2) { this.inquiriesPhone2 = inquiriesPhone2; }
+        public String bodyType;
+        public String occupation;
+        public String education;
+        public String militaryService;
+        public String maritalStatus;
+        public String origin;
+        public String personalityTraits;
+        public String hobbies;
+        public String familyDescription;
+        public String lookingFor;
+        public Integer preferredAgeFrom;
+        public Integer preferredAgeTo;
+        public String headCovering;
+        public Boolean hasDrivingLicense;
+        public Boolean smokes;
+        public String inquiriesPhone1;
+        public String inquiriesPhone2;
     }
 
-    // --- העדפות התראות ---
     public static class NotificationPrefsRequest {
-        private boolean allowInApp;
-        private boolean allowEmail;
-        private boolean allowSms;
-
-        public boolean isAllowInApp() { return allowInApp; }
-        public void setAllowInApp(boolean allowInApp) { this.allowInApp = allowInApp; }
-
-        public boolean isAllowEmail() { return allowEmail; }
-        public void setAllowEmail(boolean allowEmail) { this.allowEmail = allowEmail; }
-
-        public boolean isAllowSms() { return allowSms; }
-        public void setAllowSms(boolean allowSms) { this.allowSms = allowSms; }
+        public boolean allowInApp;
+        public boolean allowEmail;
+        public boolean allowSms;
     }
 
-    // --- מאגר כללי ---
-    public static class GlobalPoolRequest {
-        private boolean inGlobalPool;
+    public static class PrimaryPhotoStatusRequest {
+        public boolean hasPrimaryPhoto;
+    }
 
-        public boolean isInGlobalPool() { return inGlobalPool; }
-        public void setInGlobalPool(boolean inGlobalPool) { this.inGlobalPool = inGlobalPool; }
+    public static class UserInteractionRequest {
+        public Long actorId;
+        public Long targetId;
+        public String actionType;
+        public Long weddingId;
+    }
+
+    // ============================================================
+    // 🔵 טיפול בשגיאות כלליות
+    // ============================================================
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<Map<String, String>> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of("error", ex.getMessage()));
+    }
+
+    // ============================================================
+    // 1. יצירת חשבון
+    // ============================================================
+
+    @PostMapping("/register")
+    public ResponseEntity<User> register(@RequestBody CreateUserRequest req) {
+        User user = userService.createUserAccount(req.fullName, req.phone, req.email, req.gender);
+        return ResponseEntity.status(HttpStatus.CREATED).body(user);
+    }
+
+    // ============================================================
+    // 2. התחברות
+    // ============================================================
+
+    @PostMapping("/login")
+    public ResponseEntity<User> login(@RequestBody LoginRequest req) {
+        User user = userService.loginUser(req.phoneOrEmail);
+        return ResponseEntity.ok(user);
+    }
+
+    // ============================================================
+    // 3. שליחת קוד אימות מחדש
+    // ============================================================
+
+    @PostMapping("/verification/phone/resend")
+    public ResponseEntity<Map<String, String>> resendPhoneVerification(@RequestBody PhoneVerificationRequest req) {
+        userService.sendPhoneVerificationCode(req.phone);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "קוד אימות נשלח מחדש לטלפון"));
+    }
+
+    @PostMapping("/verification/email/resend")
+    public ResponseEntity<Map<String, String>> resendEmailVerification(@RequestBody EmailVerificationRequest req) {
+        userService.sendEmailVerificationCode(req.email);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "קוד אימות נשלח מחדש לאימייל"));
+    }
+
+    // ============================================================
+    // 4. אימות חשבון
+    // ============================================================
+
+    @PostMapping("/verification/phone/confirm")
+    public ResponseEntity<User> verifyByPhone(@RequestBody PhoneVerificationRequest req) {
+        User user = userService.verifyUserByPhone(req.phone, req.code);
+        return ResponseEntity.ok(user);
+    }
+
+    @PostMapping("/verification/email/confirm")
+    public ResponseEntity<User> verifyByEmail(@RequestBody EmailVerificationRequest req) {
+        User user = userService.verifyUserByEmail(req.email, req.code);
+        return ResponseEntity.ok(user);
+    }
+
+    // ============================================================
+    // 5. שליפת משתמש בודד
+    // ============================================================
+
+    @GetMapping("/{id}")
+    public ResponseEntity<User> getById(@PathVariable Long id) {
+        return userService.getUserById(id)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
+
+    // ============================================================
+    // 6. מחיקת חשבון / ביטול / ניקוי
+    // ============================================================
+
+    @PostMapping("/{id}/deletion/request")
+    public ResponseEntity<Map<String, String>> requestDeletion(@PathVariable Long id) {
+        userService.requestAccountDeletion(id);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "בקשת מחיקה נרשמה"));
+    }
+
+    @PostMapping("/{id}/deletion/cancel")
+    public ResponseEntity<Map<String, String>> cancelDeletion(@PathVariable Long id) {
+        userService.cancelAccountDeletion(id);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "בקשת מחיקה בוטלה"));
+    }
+
+    @DeleteMapping("/admin/purge-deleted")
+    public ResponseEntity<Map<String, String>> purgeDeletedAccounts() {
+        userService.purgeOldDeletedAccounts();
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "בוצע ניקוי חשבונות"));
+    }
+
+    // ============================================================
+    // 7. פרופיל בסיסי
+    // ============================================================
+
+    @PutMapping("/{id}/profile/basic")
+    public ResponseEntity<User> updateBasicProfile(@PathVariable Long id,
+                                                   @RequestBody BasicProfileRequest req) {
+        User updated = userService.updateBasicProfile(
+                id, req.fullName, req.age, req.heightCm, req.areaOfResidence, req.religiousLevel);
+        return ResponseEntity.ok(updated);
+    }
+
+    // ============================================================
+    // 8. פרופיל מלא
+    // ============================================================
+
+    @PutMapping("/{id}/profile/full")
+    public ResponseEntity<User> updateFullProfile(@PathVariable Long id,
+                                                  @RequestBody FullProfileRequest req) {
+        User updated = userService.updateFullProfile(
+                id,
+                req.bodyType, req.occupation, req.education, req.militaryService,
+                req.maritalStatus, req.origin, req.personalityTraits, req.hobbies,
+                req.familyDescription, req.lookingFor, req.preferredAgeFrom, req.preferredAgeTo,
+                req.headCovering, req.hasDrivingLicense, req.smokes, req.inquiriesPhone1, req.inquiriesPhone2
+        );
+        return ResponseEntity.ok(updated);
+    }
+
+    // ============================================================
+    // 9. העדפות התראות
+    // ============================================================
+
+    @PutMapping("/{id}/notifications/preferences")
+    public ResponseEntity<User> updateNotificationPrefs(@PathVariable Long id,
+                                                        @RequestBody NotificationPrefsRequest req) {
+        User updated = userService.updateNotificationPreferences(
+                id, req.allowInApp, req.allowEmail, req.allowSms);
+        return ResponseEntity.ok(updated);
+    }
+
+    // ============================================================
+    // 10. עדכון סטטוס תמונה ראשית
+    // ============================================================
+
+    @PutMapping("/{id}/photos/primary/status")
+    public ResponseEntity<Map<String, String>> updatePrimaryPhotoStatus(@PathVariable Long id,
+                                                                        @RequestBody PrimaryPhotoStatusRequest req) {
+        userService.updatePrimaryPhotoStatus(id, req.hasPrimaryPhoto);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "עודכן"));
+    }
+
+    // ============================================================
+    // 11. גישה למאגר גלובלי
+    // ============================================================
+
+    @PostMapping("/{id}/global/request")
+    public ResponseEntity<User> requestGlobalAccess(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.requestGlobalAccess(id));
+    }
+
+    @PostMapping("/{id}/global/approve")
+    public ResponseEntity<User> approveGlobalAccess(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.approveGlobalAccess(id));
+    }
+
+    @GetMapping("/global-pool")
+    public ResponseEntity<List<User>> getGlobalPoolUsers() {
+        return ResponseEntity.ok(userService.getGlobalPoolUsers());
+    }
+
+    // ============================================================
+    // 12. תזכורת למילוי פרופיל
+    // ============================================================
+
+    @PostMapping("/{id}/profile/reminder")
+    public ResponseEntity<Map<String, String>> sendProfileCompletionReminder(@PathVariable Long id) {
+        userService.sendProfileCompletionReminder(id);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "תזכורת נשלחה"));
+    }
+
+    // ============================================================
+    // 13. ספירת צפיות בפרופיל
+    // ============================================================
+
+    @PostMapping("/{id}/profile/view")
+    public ResponseEntity<Map<String, String>> incrementProfileViews(@PathVariable Long id) {
+        userService.incrementProfileViews(id);
+        return ResponseEntity.ok(Map.of("status", "OK", "message", "נצפתה צפייה"));
+    }
+
+    // ============================================================
+    // 14. מצב חתונה
+    // ============================================================
+
+    @PostMapping("/{id}/wedding/enter")
+    public ResponseEntity<User> enterWeddingMode(@PathVariable Long id,
+                                                 @RequestParam Long weddingId) {
+        return ResponseEntity.ok(userService.enterWeddingMode(id, weddingId));
+    }
+
+    @PostMapping("/{id}/wedding/exit")
+    public ResponseEntity<User> exitWeddingMode(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.exitWeddingMode(id));
+    }
+
+    @GetMapping("/{id}/wedding/is-in-mode")
+    public ResponseEntity<Map<String, Object>> isInWeddingMode(@PathVariable Long id) {
+        boolean in = userService.isInWeddingMode(id);
+        return ResponseEntity.ok(Map.of("userId", id, "inWeddingMode", in));
+    }
+
+    // ============================================================
+    // 15. פעולות משתמשים (LIKE / FREEZE / DISLIKE)
+    // ============================================================
+
+    @PostMapping("/interactions")
+    public ResponseEntity<Map<String, String>> performInteraction(@RequestBody UserInteractionRequest req) {
+
+        if (req.actorId == null || req.targetId == null || req.actionType == null) {
+            throw new IllegalArgumentException("actorId, targetId ו-actionType הם חובה");
+        }
+
+        UserActionType type = UserActionType.valueOf(req.actionType.toUpperCase());
+        String result = userService.performUserInteraction(
+                req.actorId, req.targetId, type, req.weddingId);
+
+        return ResponseEntity.ok(Map.of("status", "OK", "result", result));
+    }
+
+    // ============================================================
+    // 16. רשימות (1–5)
+    // ============================================================
+
+    @GetMapping("/{id}/lists/liked")
+    public ResponseEntity<List<UserAction>> getUsersILiked(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getUsersILiked(id));
+    }
+
+    @GetMapping("/{id}/lists/pending-likes")
+    public ResponseEntity<List<UserAction>> getUsersWhoLikedMeWaiting(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getUsersWhoLikedMeAndWaitingForMyResponse(id));
+    }
+
+    @GetMapping("/{id}/lists/pending-likes/alias")
+    public ResponseEntity<List<UserAction>> getPendingLikesAlias(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getPendingLikes(id));
+    }
+
+    @GetMapping("/{id}/lists/disliked")
+    public ResponseEntity<List<UserAction>> getDislikedUsers(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getDislikedUsers(id));
+    }
+
+    @GetMapping("/{id}/lists/frozen")
+    public ResponseEntity<List<UserAction>> getFrozenUsers(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getFrozenUsers(id));
+    }
+
+    // ============================================================
+    // 17. התאמות (Matches)
+    // ============================================================
+
+    @GetMapping("/{id}/matches/mutual")
+    public ResponseEntity<List<Match>> getMutualMatches(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getMutualMatches(id));
+    }
+
+    @GetMapping("/{id}/matches/active")
+    public ResponseEntity<List<Match>> getActiveMatches(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getActiveMatches(id));
+    }
+
+    @GetMapping("/{id}/matches/waiting-approval")
+    public ResponseEntity<List<Match>> getMatchesWaitingForApproval(@PathVariable Long id) {
+        return ResponseEntity.ok(userService.getMatchesWaitingForMyApproval(id));
+    }
+
+    // ============================================================
+    // 18. שאילתות Admin / Dashboard
+    // ============================================================
+
+    @GetMapping("/by-phone")
+    public ResponseEntity<User> getByPhone(@RequestParam String phone) {
+        return userRepository.findByPhone(phone)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
+
+    @GetMapping("/by-email")
+    public ResponseEntity<User> getByEmail(@RequestParam String email) {
+        return userRepository.findByEmail(email)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).build());
+    }
+
+    @GetMapping("/exists/phone")
+    public ResponseEntity<Map<String, Object>> existsByPhone(@RequestParam String phone) {
+        return ResponseEntity.ok(Map.of("phone", phone, "exists", userRepository.existsByPhone(phone)));
+    }
+
+    @GetMapping("/exists/email")
+    public ResponseEntity<Map<String, Object>> existsByEmail(@RequestParam String email) {
+        return ResponseEntity.ok(Map.of("email", email, "exists", userRepository.existsByEmail(email)));
+    }
+
+    @GetMapping("/verified")
+    public ResponseEntity<List<User>> getVerifiedUsers() {
+        return ResponseEntity.ok(userRepository.findByVerifiedTrue());
+    }
+
+    @GetMapping("/verified/pending")
+    public ResponseEntity<List<User>> getUnverifiedUsers() {
+        return ResponseEntity.ok(userRepository.findByVerifiedFalse());
+    }
+
+    @GetMapping("/profiles/basic-completed")
+    public ResponseEntity<List<User>> getBasicCompleted() {
+        return ResponseEntity.ok(userRepository.findByBasicProfileCompletedTrue());
+    }
+
+    @GetMapping("/profiles/full-completed")
+    public ResponseEntity<List<User>> getFullCompleted() {
+        return ResponseEntity.ok(userRepository.findByFullProfileCompletedTrue());
+    }
+
+    @GetMapping("/profiles/full-completed/with-photo")
+    public ResponseEntity<List<User>> getFullCompletedWithPhoto() {
+        return ResponseEntity.ok(userRepository.findCompletedFullProfileWithPhoto());
+    }
+
+    @GetMapping("/profiles/basic-completed/with-photo")
+    public ResponseEntity<List<User>> getBasicCompletedWithPhoto() {
+        return ResponseEntity.ok(userRepository.findCompletedBasicProfileWithPhoto());
+    }
+
+    @GetMapping("/global/requests")
+    public ResponseEntity<List<User>> getGlobalAccessRequests() {
+        return ResponseEntity.ok(userRepository.findByGlobalAccessRequestTrue());
+    }
+
+    @GetMapping("/global/approved")
+    public ResponseEntity<List<User>> getGlobalAccessApproved() {
+        return ResponseEntity.ok(userRepository.findByGlobalAccessApprovedTrue());
+    }
+
+    @GetMapping("/global/eligible")
+    public ResponseEntity<List<User>> getEligibleForGlobalPool() {
+        return ResponseEntity.ok(userRepository.findEligibleForGlobalPool());
+    }
+
+    @GetMapping("/by-background-wedding/{weddingId}")
+    public ResponseEntity<List<User>> getByBackgroundWedding(@PathVariable Long weddingId) {
+        return ResponseEntity.ok(userRepository.findByBackgroundWeddingId(weddingId));
+    }
+
+    @GetMapping("/by-wedding-history/{weddingId}")
+    public ResponseEntity<List<User>> getUsersWhoAttendedWedding(@PathVariable Long weddingId) {
+        return ResponseEntity.ok(userRepository.findUsersWhoAttendedWedding(weddingId));
+    }
+
+    @GetMapping("/by-first-wedding/{weddingId}")
+    public ResponseEntity<List<User>> getByFirstWedding(@PathVariable Long weddingId) {
+        return ResponseEntity.ok(userRepository.findByFirstWeddingId(weddingId));
+    }
+
+    @GetMapping("/by-last-wedding/{weddingId}")
+    public ResponseEntity<List<User>> getByLastWedding(@PathVariable Long weddingId) {
+        return ResponseEntity.ok(userRepository.findByLastWeddingId(weddingId));
+    }
+
+    @GetMapping("/can-view-wedding")
+    public ResponseEntity<List<User>> getUsersCanViewWedding() {
+        return ResponseEntity.ok(userRepository.findByCanViewWeddingTrue());
+    }
+
+    // === ✔️ כאן היה הבאג → תוקן! ===
+    @GetMapping("/event-owners/{weddingId}")
+    public ResponseEntity<User> getEventOwnerForWedding(@PathVariable Long weddingId) {
+
+        Wedding wedding = weddingRepository.findById(weddingId)
+                .orElseThrow(() -> new IllegalArgumentException("חתונה לא נמצאה"));
+
+        User owner = userRepository.findById(wedding.getOwnerUserId())
+                .orElseThrow(() -> new IllegalArgumentException("בעל האירוע לא נמצא"));
+
+        return ResponseEntity.ok(owner);
+    }
+
+    @GetMapping("/notifications/in-app")
+    public ResponseEntity<List<User>> getAllowInAppNotifications() {
+        return ResponseEntity.ok(userRepository.findByAllowInAppNotificationsTrue());
+    }
+
+    @GetMapping("/notifications/email")
+    public ResponseEntity<List<User>> getAllowEmailNotifications() {
+        return ResponseEntity.ok(userRepository.findByAllowEmailNotificationsTrue());
+    }
+
+    @GetMapping("/notifications/sms")
+    public ResponseEntity<List<User>> getAllowSmsNotifications() {
+        return ResponseEntity.ok(userRepository.findByAllowSmsNotificationsTrue());
+    }
+
+    @GetMapping("/deletion/requests")
+    public ResponseEntity<List<User>> getDeletionRequestedUsers() {
+        return ResponseEntity.ok(userRepository.findByDeletionRequestedTrue());
+    }
+
+    @GetMapping("/search/by-name")
+    public ResponseEntity<List<User>> searchByName(@RequestParam String name) {
+        return ResponseEntity.ok(userRepository.findByFullNameContainingIgnoreCase(name));
+    }
+
+    @GetMapping("/search/by-area")
+    public ResponseEntity<List<User>> searchByArea(@RequestParam String area) {
+        return ResponseEntity.ok(userRepository.findByAreaOfResidenceContainingIgnoreCase(area));
+    }
+
+    @GetMapping("/search/by-occupation")
+    public ResponseEntity<List<User>> searchByOccupation(@RequestParam String occupation) {
+        return ResponseEntity.ok(userRepository.findByOccupationContainingIgnoreCase(occupation));
+    }
+
+    @GetMapping("/search/by-education")
+    public ResponseEntity<List<User>> searchByEducation(@RequestParam String education) {
+        return ResponseEntity.ok(userRepository.findByEducationContainingIgnoreCase(education));
+    }
+
+    @GetMapping("/search/by-origin")
+    public ResponseEntity<List<User>> searchByOrigin(@RequestParam String origin) {
+        return ResponseEntity.ok(userRepository.findByOriginContainingIgnoreCase(origin));
+    }
+
+    @GetMapping("/search/by-gender")
+    public ResponseEntity<List<User>> searchByGender(@RequestParam String gender) {
+        return ResponseEntity.ok(userRepository.findByGender(gender));
+    }
+
+    @GetMapping("/ai/with-embedding")
+    public ResponseEntity<List<User>> getUsersWithEmbedding() {
+        return ResponseEntity.ok(userRepository.findByAiEmbeddingIsNotNull());
+    }
+
+    @GetMapping("/ai/boosted")
+    public ResponseEntity<List<User>> getUsersWithAiBoost(@RequestParam("minScore") Double minScore) {
+        return ResponseEntity.ok(userRepository.findByAiMatchBoostScoreGreaterThan(minScore));
     }
 }

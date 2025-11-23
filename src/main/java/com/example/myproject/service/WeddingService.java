@@ -300,6 +300,18 @@ public class WeddingService {
         w.setBackgroundMode("DEFAULT");
     }
 
+
+    public boolean isOwnerOfWedding(Long userId, Long weddingId) {
+
+        if (userId == null || weddingId == null)
+            return false;
+
+        return weddingRepository.findById(weddingId)
+                .map(w -> w.getOwner() != null &&
+                        w.getOwner().getId().equals(userId))
+                .orElse(false);
+    }
+
     // ============================================================
     // 8. חתונות LIVE / פעילה כרגע / עתידית
     // ============================================================
@@ -673,5 +685,48 @@ public class WeddingService {
         return weddingRepository.findById(weddingId)
                 .map(Wedding::isActive)
                 .orElse(false);
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isUserInWedding(Long userId, Long weddingId) {
+
+        if (userId == null || weddingId == null) {
+            return false;
+        }
+
+        // טוענים חתונה
+        Wedding wedding = weddingRepository.findById(weddingId)
+                .orElse(null);
+
+        if (wedding == null) {
+            return false;
+        }
+
+        // טוענים משתמש
+        User user = userRepository.findById(userId)
+                .orElse(null);
+
+        if (user == null) {
+            return false;
+        }
+
+        // בעל האירוע תמיד משתתף
+        if (Objects.equals(wedding.getOwnerUserId(), userId)) {
+            return true;
+        }
+
+        // משתמש נוכחי — האם מופיע ברשימת המשתתפים הנוכחיים?
+        List<User> current = getCurrentParticipants(weddingId);
+        boolean inCurrent = current.stream()
+                .anyMatch(u -> Objects.equals(u.getId(), userId));
+
+        if (inCurrent) return true;
+
+        // משתמש היסטורי — לפי דרישות האפיון
+        List<User> history = getHistoricalParticipants(weddingId);
+        boolean inHistory = history.stream()
+                .anyMatch(u -> Objects.equals(u.getId(), userId));
+
+        return inHistory;
     }
 }

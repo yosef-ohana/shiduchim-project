@@ -77,4 +77,8 @@ public interface UserActionRepository extends JpaRepository<UserAction, Long> {
 
     // ⭐ חדש — רשימות (Like/Freeze/Maybe/Waiting)
     List<UserAction> findByActorIdAndListName(Long actorId, String listName);  // כל הפעולות ברשימה מסוימת
+    List<UserAction> findByTargetAndActionTypeAndActiveTrue(
+            User target,
+            UserActionType type
+    );
 }

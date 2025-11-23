@@ -151,6 +151,8 @@ public class Match {
 
     public Long getId() { return id; }
 
+
+
     public User getUser1() { return user1; }
     public void setUser1(User user1) { this.user1 = user1; }
 
