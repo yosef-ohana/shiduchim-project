@@ -19,18 +19,18 @@ import java.util.stream.Collectors;
  * - מחיקה לוגית / מחיקה מלאה
  * - סידור גלריה מחדש
  * - בדיקה אם למשתמש יש לפחות תמונה אחת פעילה
+ * - סנכרון photosCount + hasPrimaryPhoto בישות User   ✅ NEW
  */
-@Service                      // מגדיר את המחלקה כ-Service של Spring
-@Transactional                // כל המתודות רצות בטרנזקציה מול ה-DB
+@Service
+@Transactional
 public class UserPhotoService {
 
-    private final UserPhotoRepository userPhotoRepository; // ריפו לטבלת התמונות
-    private final UserRepository userRepository;           // ריפו למשתמשים
+    private final UserPhotoRepository userPhotoRepository;
+    private final UserRepository userRepository;
 
-    // מקסימום תמונות פעילות למשתמש (כיום 6 – אפשר לשנות בעתיד במקום אחד מרכזי)
+    // מקסימום תמונות פעילות למשתמש (כיום 6 – אפשר לשנות בעתיד)
     private static final int MAX_PHOTOS_PER_USER = 6;
 
-    // בנאי DI – Spring מזריק את הריפוז
     public UserPhotoService(UserPhotoRepository userPhotoRepository,
                             UserRepository userRepository) {
         this.userPhotoRepository = userPhotoRepository;
@@ -41,20 +41,12 @@ public class UserPhotoService {
     // 1. יצירה / העלאה של תמונה
     // ----------------------------------------------------
 
-    /**
-     * העלאת תמונה חדשה למשתמש.
-     * - בודק userId ו־imageUrl.
-     * - בודק שלא עברנו את מגבלת התמונות.
-     * - אם זו התמונה הראשונה → נהיית ראשית.
-     * - אם makePrimary=true → מציב כראשית ומוריד primary מכל האחרות.
-     * - אם positionIndex=null → קובע אינדקס אוטומטי לפי סוף הגלריה.
-     */
     public UserPhoto addPhoto(Long userId,
                               String imageUrl,
                               boolean makePrimary,
                               Integer positionIndex) {
 
-        if (userId == null || imageUrl == null || imageUrl.isBlank()) { // ולידציה בסיסית
+        if (userId == null || imageUrl == null || imageUrl.isBlank()) {
             throw new IllegalArgumentException("userId and imageUrl are required");
         }
 
@@ -77,7 +69,7 @@ public class UserPhotoService {
 
             int nextIndex;
             if (existing.isEmpty()) {
-                nextIndex = 1;               // תמונה ראשונה – אינדקס 1
+                nextIndex = 1;
             } else {
                 UserPhoto last = existing.get(existing.size() - 1);
                 Integer lastIndex = last.getPositionIndex();
@@ -88,116 +80,128 @@ public class UserPhotoService {
 
         // יצירת אובייקט תמונה חדש
         UserPhoto photo = new UserPhoto();
-        photo.setUser(user);                        // למי שייכת התמונה
-        photo.setImageUrl(imageUrl);               // URL (למשל Cloudinary/S3)
-        photo.setPositionIndex(positionIndex);     // מיקום בגלריה
-        photo.setCreatedAt(LocalDateTime.now());   // זמן יצירה (אם יש setter בישות)
-        photo.setDeleted(false);                   // ברירת מחדל – לא מחוקה
+        photo.setUser(user);
+        photo.setImageUrl(imageUrl);
+        photo.setPositionIndex(positionIndex);
+        photo.setCreatedAt(LocalDateTime.now());
+        photo.setDeleted(false);
 
         // האם כבר קיימת תמונה ראשית למשתמש?
         boolean hasPrimary =
                 userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
 
-        // אם אין ראשית עדיין, או שביקשנו במפורש makePrimary
         if (!hasPrimary || makePrimary) {
-            photo.setPrimaryPhoto(true);           // מסמנים ראשית בתמונה החדשה
-            clearPrimaryFlagFromOtherPhotos(user); // ומורידים primary מהשאר
+            photo.setPrimaryPhoto(true);
+            clearPrimaryFlagFromOtherPhotos(user);
         } else {
-            photo.setPrimaryPhoto(false);          // תמונה רגילה
+            photo.setPrimaryPhoto(false);
         }
 
-        return userPhotoRepository.save(photo);    // שמירה והחזרה
+        // שמירה
+        UserPhoto saved = userPhotoRepository.save(photo);
+
+        // ✅ NEW – עדכון שדות משתמש (photosCount + hasPrimaryPhoto)
+        syncUserPhotoFlagsAfterAdd(user, saved);
+
+        return saved;
+    }
+
+    /**
+     * עדכון photosCount + hasPrimaryPhoto אחרי הוספת תמונה.
+     */
+    private void syncUserPhotoFlagsAfterAdd(User user, UserPhoto newPhoto) {
+        // ספירה מחדש של תמונות פעילות
+        long activeCount = userPhotoRepository.countByUserAndDeletedFalse(user);
+
+        user.setPhotosCount((int) activeCount);
+
+        if (newPhoto.isPrimaryPhoto()) {
+            user.setHasPrimaryPhoto(true);
+        } else {
+            // אם אין אף primary פעילה – נבדוק מחדש
+            boolean hasPrimary =
+                    userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
+            user.setHasPrimaryPhoto(hasPrimary);
+        }
+
+        // בגלל @Transactional מספיק לשנות את האובייקט,
+        // אבל נשמור מפורש בשביל בהירות:
+        userRepository.save(user);
     }
 
     // ----------------------------------------------------
     // 2. החלפת / הגדרת תמונה ראשית
     // ----------------------------------------------------
 
-    /**
-     * קביעת תמונה מסוימת כראשית.
-     * - מוודא שהתמונה שייכת למשתמש ולא מחוקה.
-     * - מבטל primary מכל שאר התמונות הפעילות.
-     */
     public UserPhoto setPrimaryPhoto(Long userId, Long photoId) {
         if (userId == null || photoId == null) {
             throw new IllegalArgumentException("userId and photoId are required");
         }
 
-        // טעינת המשתמש
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        // טעינת התמונה
         UserPhoto photo = userPhotoRepository.findById(photoId)
                 .orElseThrow(() -> new IllegalArgumentException("Photo not found: " + photoId));
 
-        // בדיקה שהתמונה באמת שייכת למשתמש הזה
         if (!photo.getUser().getId().equals(user.getId())) {
             throw new IllegalArgumentException("Photo does not belong to the given user");
         }
 
-        // לא ניתן להגדיר תמונה מחוקה כראשית
         if (photo.isDeleted()) {
             throw new IllegalStateException("Cannot set deleted photo as primary");
         }
 
-        // ביטול primary מכל התמונות האחרות של המשתמש
         clearPrimaryFlagFromOtherPhotos(user);
 
-        // סימון התמונה הנוכחית כראשית
         photo.setPrimaryPhoto(true);
-        return userPhotoRepository.save(photo);
+        UserPhoto saved = userPhotoRepository.save(photo);
+
+        // ✅ NEW – אם יש primary אחת לפחות → מסמנים hasPrimaryPhoto=true
+        user.setHasPrimaryPhoto(true);
+        userRepository.save(user);
+
+        return saved;
     }
 
-    /**
-     * עזר פנימי – מבטל primary מכל התמונות הפעילות של המשתמש.
-     */
     private void clearPrimaryFlagFromOtherPhotos(User user) {
         List<UserPhoto> active = userPhotoRepository.findByUserAndDeletedFalse(user);
 
         for (UserPhoto p : active) {
-            if (p.isPrimaryPhoto()) {      // אם התמונה מסומנת כ-primary
-                p.setPrimaryPhoto(false);  // נסיר את הדגל
+            if (p.isPrimaryPhoto()) {
+                p.setPrimaryPhoto(false);
             }
         }
 
-        userPhotoRepository.saveAll(active); // שמירה מרוכזת
+        userPhotoRepository.saveAll(active);
     }
 
     // ----------------------------------------------------
     // 3. מחיקה לוגית / מחיקה מלאה
     // ----------------------------------------------------
 
-    /**
-     * מחיקה לוגית (soft delete) של תמונה:
-     * - מסמן deleted=true ו-primaryPhoto=false.
-     * - אם זו הייתה התמונה הראשית → מחפש תמונה פעילה אחרת ומגדיר אותה כראשית.
-     */
     public void softDeletePhoto(Long userId, Long photoId) {
         if (userId == null || photoId == null) {
             throw new IllegalArgumentException("userId and photoId are required");
         }
 
-        // טעינת המשתמש
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        // טעינת התמונה
         UserPhoto photo = userPhotoRepository.findById(photoId)
                 .orElseThrow(() -> new IllegalArgumentException("Photo not found: " + photoId));
 
-        // לוודא שהתמונה שייכת למשתמש
         if (!photo.getUser().getId().equals(user.getId())) {
             throw new IllegalArgumentException("Photo does not belong to the given user");
         }
 
-        boolean wasPrimary = photo.isPrimaryPhoto(); // נזכור אם הייתה ראשית
+        boolean wasPrimary = photo.isPrimaryPhoto();
 
-        photo.setDeleted(true);          // מסמן כמחוקה
-        photo.setPrimaryPhoto(false);    // כבר לא ראשית
-        userPhotoRepository.save(photo); // שמירה
+        photo.setDeleted(true);
+        photo.setPrimaryPhoto(false);
+        userPhotoRepository.save(photo);
 
-        // אם מחקנו את התמונה הראשית → ננסה לבחור ראשית חדשה
+        // אם מחקנו primary – ננסה לבחור אחרת
         if (wasPrimary) {
             UserPhoto replacement =
                     userPhotoRepository.findFirstByUserAndDeletedFalseOrderByCreatedAtAsc(user);
@@ -207,31 +211,48 @@ public class UserPhotoService {
                 userPhotoRepository.save(replacement);
             }
         }
+
+        // ✅ NEW – סנכרון סטטוס המשתמש אחרי מחיקה
+        syncUserPhotoFlagsAfterDelete(user);
+    }
+
+    /**
+     * עדכון photosCount + hasPrimaryPhoto אחרי מחיקה לוגית / מחיקה מלאה.
+     */
+    private void syncUserPhotoFlagsAfterDelete(User user) {
+        long activeCount = userPhotoRepository.countByUserAndDeletedFalse(user);
+        user.setPhotosCount((int) activeCount);
+
+        boolean hasPrimary =
+                userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
+        user.setHasPrimaryPhoto(hasPrimary);
+
+        userRepository.save(user);
     }
 
     /**
      * מחיקה פיזית של כל התמונות של משתמש (למשל בעת מחיקת חשבון סופית).
-     * בדרך כלל ייקרא מתוך UserService.deleteUserHard().
      */
     public void hardDeleteAllPhotosForUser(Long userId) {
         if (userId == null) {
-            return; // אין מה למחוק
+            return;
         }
 
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        userPhotoRepository.deleteByUser(user); // מחיקה פיזית מה-DB
+        userPhotoRepository.deleteByUser(user);
+
+        // ✅ NEW – איפוס מוחלט בשדות המשתמש
+        user.setPhotosCount(0);
+        user.setHasPrimaryPhoto(false);
+        userRepository.save(user);
     }
 
     // ----------------------------------------------------
     // 4. גלריה – שליפה וסידור מחדש
     // ----------------------------------------------------
 
-    /**
-     * מחזיר את כל התמונות הפעילות של המשתמש לפי סדר positionIndex.
-     * שימושי למסך גלריה בצד ה-Client.
-     */
     public List<UserPhoto> getActivePhotosForUser(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
@@ -239,9 +260,6 @@ public class UserPhotoService {
         return userPhotoRepository.findByUserAndDeletedFalseOrderByPositionIndexAsc(user);
     }
 
-    /**
-     * מחזיר את כל התמונות (כולל מחוקות) – בעיקר למסכי ניהול.
-     */
     public List<UserPhoto> getAllPhotosForUser(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
@@ -249,9 +267,6 @@ public class UserPhotoService {
         return userPhotoRepository.findByUser(user);
     }
 
-    /**
-     * מחזיר את התמונה הראשית של המשתמש, אם קיימת.
-     */
     public UserPhoto getPrimaryPhotoForUser(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
@@ -259,12 +274,6 @@ public class UserPhotoService {
         return userPhotoRepository.findByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
     }
 
-    /**
-     * סידור מחדש של גלריית התמונות:
-     * - מקבל רשימת מזהי תמונות פעילים בסדר הרצוי.
-     * - מוודא שכל id שייך למשתמש ושהתמונה לא מחוקה.
-     * - מגדיר positionIndex 1..n לפי סדר הרשימה.
-     */
     public void reorderUserPhotos(Long userId, List<Long> photoIdsActiveInOrder) {
         if (userId == null || photoIdsActiveInOrder == null) {
             throw new IllegalArgumentException("userId and photoIdsActiveInOrder are required");
@@ -273,15 +282,12 @@ public class UserPhotoService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        // כל התמונות הפעילות הנוכחיות
         List<UserPhoto> activePhotos =
                 userPhotoRepository.findByUserAndDeletedFalseOrderByPositionIndexAsc(user);
 
-        // מיפוי id → אובייקט
         Map<Long, UserPhoto> activeById = activePhotos.stream()
                 .collect(Collectors.toMap(UserPhoto::getId, p -> p));
 
-        // לוודא שכל id ברשימה באמת שייך למשתמש ופעיל
         for (Long pid : photoIdsActiveInOrder) {
             if (!activeById.containsKey(pid)) {
                 throw new IllegalArgumentException(
@@ -290,31 +296,26 @@ public class UserPhotoService {
             }
         }
 
-        // כאן החלטנו שהרשימה חייבת לכלול את כל התמונות הפעילות
         if (photoIdsActiveInOrder.size() != activePhotos.size()) {
             throw new IllegalArgumentException(
                     "Order list size does not match number of active photos"
             );
         }
 
-        // עדכון positionIndex לפי הסדר החדש
         int index = 1;
         for (Long pid : photoIdsActiveInOrder) {
             UserPhoto p = activeById.get(pid);
             p.setPositionIndex(index++);
         }
 
-        userPhotoRepository.saveAll(activePhotos); // שמירה מרוכזת
+        userPhotoRepository.saveAll(activePhotos);
+        // כאן אין שינוי שדות משתמש – רק סדר גלריה.
     }
 
     // ----------------------------------------------------
     // 5. עזר – בדיקה האם למשתמש יש לפחות תמונה פעילה אחת
     // ----------------------------------------------------
 
-    /**
-     * בודק האם למשתמש יש לפחות תמונה פעילה אחת.
-     * שימושי בבדיקת "פרופיל תקין" – חובה תמונה אחת.
-     */
     public boolean userHasAtLeastOneActivePhoto(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));

@@ -15,6 +15,11 @@ import com.example.myproject.repository.UserRepository;
 import com.example.myproject.repository.WeddingRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.myproject.dto.UserProfileResponse;
+import com.example.myproject.dto.UserProfileResponse.PhotoDto;
+import com.example.myproject.model.UserPhoto;
+import com.example.myproject.service.UserPhotoService;
+import java.util.stream.Collectors;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -30,6 +35,7 @@ public class UserService {
     private final UserActionRepository userActionRepository;
     private final MatchRepository matchRepository;
     private final WeddingRepository weddingRepository;
+    private final UserPhotoService userPhotoService;   // ⭐ NEW
 
     private final Random random = new Random();
 
@@ -37,14 +43,121 @@ public class UserService {
                        NotificationRepository notificationRepository,
                        UserActionRepository userActionRepository,
                        MatchRepository matchRepository,
-                       WeddingRepository weddingRepository) {
+                       WeddingRepository weddingRepository,
+                       UserPhotoService userPhotoService) {   // ⭐ NEW arg
 
         this.userRepository = userRepository;
         this.notificationRepository = notificationRepository;
         this.userActionRepository = userActionRepository;
         this.matchRepository = matchRepository;
         this.weddingRepository = weddingRepository;
+        this.userPhotoService = userPhotoService;      // ⭐ NEW
     }
+
+
+    // ===================================================================
+    // 🔥 פונקציה מרכזית: שליפת פרופיל משתמש מלא (UserProfileResponse)
+    // ===================================================================
+    @Transactional(readOnly = true)
+    public UserProfileResponse getFullUserProfile(Long userId) {
+
+        User user = getUserOrThrow(userId);
+
+        // שליפת כל התמונות הפעילות
+        List<UserPhoto> activePhotos = userPhotoService.getActivePhotosForUser(userId);
+
+        // שליפת כל התמונות (למסכים עתידיים)
+        List<UserPhoto> allPhotos = userPhotoService.getAllPhotosForUser(userId);
+
+        // Primary photo
+        UserPhoto primary = userPhotoService.getPrimaryPhotoForUser(userId);
+        String primaryUrl = (primary != null ? primary.getImageUrl() : null);
+
+        // האם יש לפחות תמונה?
+        boolean hasAnyPhoto = !activePhotos.isEmpty();
+
+        // האם יש primary?
+        boolean hasPrimaryPhoto = (primary != null);
+
+        // האם מותר למשתמש להיכנס למאגר הגלובלי?
+        boolean canEnterGlobal =
+                user.isFullProfileCompleted() &&
+                        hasPrimaryPhoto;
+
+        UserProfileResponse resp = new UserProfileResponse();
+
+        // ========== מידע בסיסי ==========
+        resp.setId(user.getId());
+        resp.setFullName(user.getFullName());
+        resp.setGender(user.getGender());
+        resp.setAge(user.getAge());
+        resp.setHeightCm(user.getHeightCm());
+        resp.setAreaOfResidence(user.getAreaOfResidence());
+        resp.setReligiousLevel(user.getReligiousLevel());
+
+        // ========== פרופיל מורחב ==========
+        resp.setBodyType(user.getBodyType());
+        resp.setOccupation(user.getOccupation());
+        resp.setEducation(user.getEducation());
+        resp.setMilitaryService(user.getMilitaryService());
+        resp.setMaritalStatus(user.getMaritalStatus());
+        resp.setOrigin(user.getOrigin());
+        resp.setPersonalityTraits(user.getPersonalityTraits());
+        resp.setHobbies(user.getHobbies());
+        resp.setFamilyDescription(user.getFamilyDescription());
+        resp.setLookingFor(user.getLookingFor());
+        resp.setSmokes(user.getSmokes());
+        resp.setHasDrivingLicense(user.getHasDrivingLicense());
+        resp.setHeadCovering(user.getHeadCovering());
+
+        // ========== סטטוס פרופיל ==========
+        resp.setBasicProfileCompleted(user.isBasicProfileCompleted());
+        resp.setFullProfileCompleted(user.isFullProfileCompleted());
+        resp.setHasAtLeastOnePhoto(hasAnyPhoto);
+        resp.setHasPrimaryPhoto(hasPrimaryPhoto);
+
+        // ========== מאגר גלובלי ==========
+        resp.setInGlobalPool(user.isInGlobalPool());
+        resp.setGlobalAccessApproved(user.isGlobalAccessApproved());
+        resp.setGlobalAccessRequest(user.isGlobalAccessRequest());
+        resp.setCanEnterGlobalPool(canEnterGlobal);
+
+        // ========== חתונות ==========
+        resp.setActiveWeddingId(user.getActiveWeddingId());
+        resp.setBackgroundWeddingId(user.getBackgroundWeddingId());
+        resp.setBackgroundMode(user.getBackgroundMode());
+
+        resp.setFirstWeddingId(user.getFirstWeddingId());
+        resp.setLastWeddingId(user.getLastWeddingId());
+        resp.setWeddingsHistory(user.getWeddingsHistory());
+
+        // ========== תמונות ==========
+        resp.setPhotosCount(activePhotos.size());
+        resp.setPrimaryPhotoUrl(primaryUrl);
+        resp.setPhotos(mapPhotos(allPhotos));
+
+        // ========== תאריכים ==========
+        resp.setCreatedAt(user.getCreatedAt());
+        resp.setUpdatedAt(user.getUpdatedAt());
+
+        return resp;
+    }
+
+    // =====================================================
+    // 🔹 מיפוי תמונות → PhotoDto
+    // =====================================================
+    private List<UserProfileResponse.PhotoDto> mapPhotos(List<UserPhoto> list) {
+        return list.stream()
+                .map(p -> new UserProfileResponse.PhotoDto(
+                        p.getId(),
+                        p.getImageUrl(),
+                        p.isPrimaryPhoto(),
+                        p.isDeleted(),
+                        p.getPositionIndex()
+                ))
+                .toList();
+    }
+
 
     // ======================================================
     // 🔹 Utility – קוד אימות רנדומלי (6 ספרות)
@@ -109,6 +222,8 @@ public class UserService {
 
         return userRepository.save(user);
     }
+
+
 
     // ======================================================
     // 🔹 שליחת קוד אימות SMS מחדש
@@ -961,4 +1076,6 @@ public class UserService {
         return matchRepository
                 .findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(userId, userId);
     }
+
+
 }

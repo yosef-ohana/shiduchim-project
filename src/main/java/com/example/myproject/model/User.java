@@ -1,5 +1,6 @@
 package com.example.myproject.model;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -146,6 +147,7 @@ public class User {
     // 🔵 תמונות
     // =====================================================
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
     private List<UserPhoto> photos;
 
     private Integer photosCount = 0;
@@ -157,18 +159,23 @@ public class User {
     // 🔵 קשרים לוגיים נוספים
     // =====================================================
     @OneToMany(mappedBy = "actor")
+    @JsonIgnore
     private List<UserAction> actionsDone;
 
     @OneToMany(mappedBy = "target")
+    @JsonIgnore
     private List<UserAction> actionsReceived;
 
     @OneToMany(mappedBy = "sender")
+    @JsonIgnore
     private List<ChatMessage> sentMessages;
 
     @OneToMany(mappedBy = "recipient")
+    @JsonIgnore
     private List<ChatMessage> receivedMessages;
 
     @OneToMany(mappedBy = "recipient", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
     private List<Notification> notifications;
 
     // =====================================================
@@ -215,7 +222,9 @@ public class User {
     private LocalDateTime weddingEntryAt;  // מתי נכנסתי לחתונה האחרונה
 
     @Column(name = "wedding_exit_at")
-    private LocalDateTime weddingExitAt;   // מתי יצאתי מהחתונה (אם יצאתי)
+    private LocalDateTime weddingExitAt;// מתי יצאתי מהחתונה (אם יצאתי)
+
+
 
     // =====================================================
     // 🔵 בנאים
