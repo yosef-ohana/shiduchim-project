@@ -149,6 +149,24 @@ public class UserController {
         return ResponseEntity.ok(Map.of("status", "OK", "message", "קוד אימות נשלח מחדש לטלפון"));
     }
 
+    @PostMapping("/verification/phone/send")
+    public ResponseEntity<Map<String, String>> sendPhoneVerification(@RequestBody PhoneVerificationRequest req) {
+        userService.sendPhoneVerificationCode(req.phone);
+        return ResponseEntity.ok(Map.of(
+                "status", "OK",
+                "message", "קוד אימות נשלח לטלפון"
+        ));
+    }
+
+    @PostMapping("/verification/email/send")
+    public ResponseEntity<Map<String, String>> sendEmailVerification(@RequestBody EmailVerificationRequest req) {
+        userService.sendEmailVerificationCode(req.email);
+        return ResponseEntity.ok(Map.of(
+                "status", "OK",
+                "message", "קוד אימות נשלח לאימייל"
+        ));
+    }
+
     @PostMapping("/verification/email/resend")
     public ResponseEntity<Map<String, String>> resendEmailVerification(@RequestBody EmailVerificationRequest req) {
         userService.sendEmailVerificationCode(req.email);

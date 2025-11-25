@@ -1,5 +1,6 @@
 package com.example.myproject.service;
 
+import com.example.myproject.dto.UserProfileResponse;
 import com.example.myproject.model.Match;
 import com.example.myproject.model.Notification;
 import com.example.myproject.model.NotificationType;
@@ -7,6 +8,7 @@ import com.example.myproject.model.User;
 import com.example.myproject.model.UserAction;
 import com.example.myproject.model.UserActionCategory;
 import com.example.myproject.model.UserActionType;
+import com.example.myproject.model.UserPhoto;
 import com.example.myproject.model.Wedding;
 import com.example.myproject.repository.MatchRepository;
 import com.example.myproject.repository.NotificationRepository;
@@ -15,11 +17,6 @@ import com.example.myproject.repository.UserRepository;
 import com.example.myproject.repository.WeddingRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import com.example.myproject.dto.UserProfileResponse;
-import com.example.myproject.dto.UserProfileResponse.PhotoDto;
-import com.example.myproject.model.UserPhoto;
-import com.example.myproject.service.UserPhotoService;
-import java.util.stream.Collectors;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -35,7 +32,7 @@ public class UserService {
     private final UserActionRepository userActionRepository;
     private final MatchRepository matchRepository;
     private final WeddingRepository weddingRepository;
-    private final UserPhotoService userPhotoService;   // ⭐ NEW
+    private final UserPhotoService userPhotoService;
 
     private final Random random = new Random();
 
@@ -44,20 +41,63 @@ public class UserService {
                        UserActionRepository userActionRepository,
                        MatchRepository matchRepository,
                        WeddingRepository weddingRepository,
-                       UserPhotoService userPhotoService) {   // ⭐ NEW arg
+                       UserPhotoService userPhotoService) {
 
         this.userRepository = userRepository;
         this.notificationRepository = notificationRepository;
         this.userActionRepository = userActionRepository;
         this.matchRepository = matchRepository;
         this.weddingRepository = weddingRepository;
-        this.userPhotoService = userPhotoService;      // ⭐ NEW
+        this.userPhotoService = userPhotoService;
     }
 
+    // ===================================================================
+    // 🔸 Helpers – כללי ברזל של 2025
+    // ===================================================================
+
+    /**
+     * בדיקה: האם למשתמש יש לפחות תמונה ראשית אחת.
+     * אם לא – זורקים 409 לוגי:
+     * "כדי להשתמש במערכת או לבצע פעולה זו, עליך להעלות לפחות תמונה אחת"
+     */
+    private void assertHasPrimaryPhotoForAction(User user) {
+        if (!user.isHasPrimaryPhoto()) {
+            // mapped ע"י ControllerAdvice ל-HTTP 409
+            throw new IllegalStateException("כדי להשתמש במערכת או לבצע פעולה זו, עליך להעלות לפחות תמונה אחת");
+        }
+    }
+
+    /**
+     * בדיקה: האם פרופיל הבסיס + הפרופיל המלא שלמים (כל שדות החובה).
+     * אם לא – זורקים 409 לוגי:
+     * "כדי להמשיך להשתמש במערכת, עליך למלא את כל פרטי החובה שבפרופיל"
+     */
+    private void assertProfileCompletedForAction(User user) {
+        if (!user.isBasicProfileCompleted() || !user.isFullProfileCompleted()) {
+            throw new IllegalStateException("כדי להמשיך להשתמש במערכת, עליך למלא את כל פרטי החובה שבפרופיל");
+        }
+    }
+
+    /**
+     * בדיקה מרוכזת: האם המשתמש רשאי לבצע פעולות חברתיות במערכת.
+     * כל ההיסטוריה נשמרת – אבל ביצוע פעולות חדשות חסום עד שהכל מלא.
+     */
+    private void assertUserEligibleForSocialActions(User user) {
+        assertHasPrimaryPhotoForAction(user);
+        assertProfileCompletedForAction(user);
+    }
+
+    /**
+     * כלי עזר קצר לשדה ריק.
+     */
+    private boolean notEmpty(String s) {
+        return s != null && !s.isBlank();
+    }
 
     // ===================================================================
     // 🔥 פונקציה מרכזית: שליפת פרופיל משתמש מלא (UserProfileResponse)
     // ===================================================================
+
     @Transactional(readOnly = true)
     public UserProfileResponse getFullUserProfile(Long userId) {
 
@@ -66,7 +106,7 @@ public class UserService {
         // שליפת כל התמונות הפעילות
         List<UserPhoto> activePhotos = userPhotoService.getActivePhotosForUser(userId);
 
-        // שליפת כל התמונות (למסכים עתידיים)
+        // שליפת כל התמונות (למסכים עתידיים / ניהול גלריה)
         List<UserPhoto> allPhotos = userPhotoService.getAllPhotosForUser(userId);
 
         // Primary photo
@@ -134,7 +174,17 @@ public class UserService {
         // ========== תמונות ==========
         resp.setPhotosCount(activePhotos.size());
         resp.setPrimaryPhotoUrl(primaryUrl);
-        resp.setPhotos(mapPhotos(allPhotos));
+        resp.setPhotos(
+                allPhotos.stream()
+                        .map(p -> new UserProfileResponse.PhotoDto(
+                                p.getId(),
+                                p.getImageUrl(),
+                                p.isPrimaryPhoto(),
+                                p.isDeleted(),
+                                p.getPositionIndex()
+                        ))
+                        .toList()
+        );
 
         // ========== תאריכים ==========
         resp.setCreatedAt(user.getCreatedAt());
@@ -142,22 +192,6 @@ public class UserService {
 
         return resp;
     }
-
-    // =====================================================
-    // 🔹 מיפוי תמונות → PhotoDto
-    // =====================================================
-    private List<UserProfileResponse.PhotoDto> mapPhotos(List<UserPhoto> list) {
-        return list.stream()
-                .map(p -> new UserProfileResponse.PhotoDto(
-                        p.getId(),
-                        p.getImageUrl(),
-                        p.isPrimaryPhoto(),
-                        p.isDeleted(),
-                        p.getPositionIndex()
-                ))
-                .toList();
-    }
-
 
     // ======================================================
     // 🔹 Utility – קוד אימות רנדומלי (6 ספרות)
@@ -188,7 +222,7 @@ public class UserService {
 
         User user = new User();
 
-        // שדות חובה
+        // שדות חובה (ה-Frontend יוודא שהכול מולא לפני שליחת הבקשה)
         user.setFullName(fullName);
         user.setPhone(phone);
         user.setEmail(email);
@@ -198,10 +232,11 @@ public class UserService {
         user.setVerified(false);
         user.setVerificationCode(generateVerificationCode());
 
-        // סטטוסי פרופיל
+        // סטטוסי פרופיל (טרם כרטיס מלא)
         user.setBasicProfileCompleted(false);
         user.setFullProfileCompleted(false);
         user.setHasPrimaryPhoto(false);
+        user.setPhotosCount(0);
 
         // מאגר גלובלי
         user.setInGlobalPool(false);
@@ -222,8 +257,6 @@ public class UserService {
 
         return userRepository.save(user);
     }
-
-
 
     // ======================================================
     // 🔹 שליחת קוד אימות SMS מחדש
@@ -419,8 +452,7 @@ public class UserService {
     }
 
     // ======================================================
-    //      UserService – Part 2/3
-    //      Profile + Preferences + Global Pool + Background
+    //      UserService – Profile + Preferences + Global Pool + Background
     // ======================================================
 
     // ======================================================
@@ -464,11 +496,6 @@ public class UserService {
         user.setUpdatedAt(LocalDateTime.now());
 
         return userRepository.save(user);
-    }
-
-    // כלי עזר קצר לשדה ריק
-    private boolean notEmpty(String s) {
-        return s != null && !s.isBlank();
     }
 
     // ======================================================
@@ -600,7 +627,6 @@ public class UserService {
 
     // ======================================================
     // 🔹 אישור גישה גלובלית ע"י מנהל (approve)
-    //     (אפיון 2025: בלי fullProfileCompleted + תמונה — אין מאגר כללי)
     // ======================================================
 
     @Transactional
@@ -638,7 +664,7 @@ public class UserService {
     }
 
     // ======================================================
-    // 🔹 שליפת משתמשים במאגר הגלובלי
+    // 🔹 שליפת משתמשים במאגר הגלובלי (שירות מערכת/אדמין)
     // ======================================================
 
     @Transactional(readOnly = true)
@@ -682,9 +708,6 @@ public class UserService {
 
     // ======================================================
     // 🔹 מצב חתונה / רקע (Wedding Mode vs Global)
-    //     לפי האפיון:
-    //     • ב-WEDDING → רקע מהחתונה
-    //     • ב-DEFAULT → רקע ברירת מחדל
     // ======================================================
 
     @Transactional
@@ -704,7 +727,7 @@ public class UserService {
 
         User saved = userRepository.save(user);
 
-        // התראה אופציונלית – כניסה לחתונה (אפשר גם לכבות בעתיד אם לא תרצה)
+        // התראה אופציונלית – כניסה לחתונה
         createSimpleNotification(
                 saved,
                 NotificationType.WEDDING_ENTRY,
@@ -737,8 +760,7 @@ public class UserService {
     }
 
     // ======================================================
-    //      UserService – Part 3/3
-    //      Likes / Freeze / Dislike / Match Logic
+    //      UserService – Likes / Freeze / Dislike / Match Logic
     // ======================================================
 
     // ======================================================
@@ -756,6 +778,9 @@ public class UserService {
 
         if (actorId.equals(targetId))
             throw new IllegalArgumentException("משתמש אינו יכול לבצע פעולה על עצמו.");
+
+        // לפי האפיון – בלי תמונה/פרופיל מלא: מותר רק התחברות ואזור אישי, לא פעולות חברתיות
+        assertUserEligibleForSocialActions(actor);
 
         // מנקים פעולות קודמות של actor על target כדי למנוע התנגשות
         deactivatePreviousActions(actor, target);
@@ -980,6 +1005,8 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getUsersILiked(Long userId) {
         User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
+
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.LIKE
         );
@@ -989,6 +1016,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getUsersWhoLikedMeAndWaitingForMyResponse(Long userId) {
         User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
 
         // כל הלייקים הפעילים עליי
         List<UserAction> likesOnMe =
@@ -1032,6 +1060,8 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getFrozenUsers(Long userId) {
         User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
+
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.FREEZE
         );
@@ -1041,6 +1071,8 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getDislikedUsers(Long userId) {
         User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
+
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.DISLIKE
         );
@@ -1052,6 +1084,9 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public List<Match> getMutualMatches(Long userId) {
+        User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
+
         return matchRepository.findByMutualApprovedTrue()
                 .stream()
                 .filter(m -> m.involvesUser(userId))
@@ -1060,6 +1095,9 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public List<Match> getActiveMatches(Long userId) {
+        User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
+
         return matchRepository.findByActiveTrue()
                 .stream()
                 .filter(m -> m.involvesUser(userId))
@@ -1072,10 +1110,11 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public List<Match> getMatchesWaitingForMyApproval(Long userId) {
+        User me = getUserOrThrow(userId);
+        assertUserEligibleForSocialActions(me);
 
         return matchRepository
                 .findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(userId, userId);
     }
-
 
 }
