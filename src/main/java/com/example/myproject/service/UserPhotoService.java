@@ -19,7 +19,8 @@ import java.util.stream.Collectors;
  * - מחיקה לוגית / מחיקה מלאה
  * - סידור גלריה מחדש
  * - בדיקה אם למשתמש יש לפחות תמונה אחת פעילה
- * - סנכרון photosCount + hasPrimaryPhoto בישות User   ✅ NEW
+ * - סנכרון photosCount + hasPrimaryPhoto בישות User
+ * - לפי האפיון החדש: תמונה ראשית היא תנאי לכרטיס משתמש פעיל
  */
 @Service
 @Transactional
@@ -90,6 +91,7 @@ public class UserPhotoService {
         boolean hasPrimary =
                 userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
 
+        // לפי האפיון: אם זו התמונה הראשונה או שהמשתמש ביקש – היא תהיה PRIMARY
         if (!hasPrimary || makePrimary) {
             photo.setPrimaryPhoto(true);
             clearPrimaryFlagFromOtherPhotos(user);
@@ -100,7 +102,7 @@ public class UserPhotoService {
         // שמירה
         UserPhoto saved = userPhotoRepository.save(photo);
 
-        // ✅ NEW – עדכון שדות משתמש (photosCount + hasPrimaryPhoto)
+        // ✅ עדכון שדות משתמש (photosCount + hasPrimaryPhoto)
         syncUserPhotoFlagsAfterAdd(user, saved);
 
         return saved;
@@ -124,8 +126,6 @@ public class UserPhotoService {
             user.setHasPrimaryPhoto(hasPrimary);
         }
 
-        // בגלל @Transactional מספיק לשנות את האובייקט,
-        // אבל נשמור מפורש בשביל בהירות:
         userRepository.save(user);
     }
 
@@ -157,7 +157,7 @@ public class UserPhotoService {
         photo.setPrimaryPhoto(true);
         UserPhoto saved = userPhotoRepository.save(photo);
 
-        // ✅ NEW – אם יש primary אחת לפחות → מסמנים hasPrimaryPhoto=true
+        // אם יש primary אחת לפחות → מסמנים hasPrimaryPhoto=true
         user.setHasPrimaryPhoto(true);
         userRepository.save(user);
 
@@ -201,7 +201,7 @@ public class UserPhotoService {
         photo.setPrimaryPhoto(false);
         userPhotoRepository.save(photo);
 
-        // אם מחקנו primary – ננסה לבחור אחרת
+        // אם מחקנו primary – ננסה לבחור אחרת (לפי createdAt, כמו שביקשת)
         if (wasPrimary) {
             UserPhoto replacement =
                     userPhotoRepository.findFirstByUserAndDeletedFalseOrderByCreatedAtAsc(user);
@@ -212,7 +212,7 @@ public class UserPhotoService {
             }
         }
 
-        // ✅ NEW – סנכרון סטטוס המשתמש אחרי מחיקה
+        // סנכרון סטטוס המשתמש אחרי מחיקה
         syncUserPhotoFlagsAfterDelete(user);
     }
 
@@ -243,7 +243,7 @@ public class UserPhotoService {
 
         userPhotoRepository.deleteByUser(user);
 
-        // ✅ NEW – איפוס מוחלט בשדות המשתמש
+        // איפוס מוחלט בשדות המשתמש
         user.setPhotosCount(0);
         user.setHasPrimaryPhoto(false);
         userRepository.save(user);
@@ -309,18 +309,31 @@ public class UserPhotoService {
         }
 
         userPhotoRepository.saveAll(activePhotos);
-        // כאן אין שינוי שדות משתמש – רק סדר גלריה.
+        // אין שינוי בשדות משתמש – רק סדר גלריה.
     }
 
     // ----------------------------------------------------
-    // 5. עזר – בדיקה האם למשתמש יש לפחות תמונה פעילה אחת
+    // 5. פונקציות עזר – למשתמש
     // ----------------------------------------------------
 
+    /**
+     * האם למשתמש יש לפחות תמונה פעילה אחת.
+     */
     public boolean userHasAtLeastOneActivePhoto(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
         long count = userPhotoRepository.countByUserAndDeletedFalse(user);
         return count > 0;
+    }
+
+    /**
+     * האם למשתמש יש תמונה ראשית אמיתית (active + primary=true).
+     */
+    public boolean userHasPrimaryPhoto(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
+
+        return userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
     }
 }
