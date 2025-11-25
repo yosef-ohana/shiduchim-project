@@ -30,7 +30,7 @@ import java.util.List;
  *     ובפרודקשן אמיתית יתווסף גם שכבת Auth/JWT מעל הקונטרולרים.
  */
 @RestController
-@RequestMapping("/api/weddings/admin")
+@RequestMapping("/api/admin/weddings")
 public class WeddingAdminController {
 
     private final WeddingService weddingService;
@@ -175,6 +175,46 @@ public class WeddingAdminController {
                     request.getBackgroundVideoUrl()
             );
             return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    /**
+     * שליפת סטטוס רקע של חתונה לאדמין.
+     *
+     * GET /api/weddings/admin/{weddingId}/background/status
+     */
+    @GetMapping("/{weddingId}/background/status")
+    public ResponseEntity<AdminFullUpdateWeddingRequest.BackgroundStatusResponse> getWeddingBackgroundStatus(@PathVariable Long weddingId) {
+        try {
+            Wedding wedding = weddingService.getWeddingById(weddingId);
+
+            AdminFullUpdateWeddingRequest.BackgroundStatusResponse resp = new AdminFullUpdateWeddingRequest.BackgroundStatusResponse();
+            resp.setBackgroundImageUrl(wedding.getBackgroundImageUrl());
+            resp.setBackgroundVideoUrl(wedding.getBackgroundVideoUrl());
+            resp.setBackgroundMode(wedding.getBackgroundMode());
+            resp.setEffectiveBackgroundUrl(wedding.getEffectiveBackgroundUrl());
+            resp.setUpdatedAt(wedding.getUpdatedAt());
+
+            return ResponseEntity.ok(resp);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    /**
+     * איפוס רקע של חתונה:
+     * מוחק גם תמונת רקע וגם וידאו, ומשאיר את החתונה במצב DEFAULT.
+     *
+     * DELETE /api/weddings/admin/{weddingId}/background
+     */
+    @DeleteMapping("/{weddingId}/background")
+    public ResponseEntity<Void> resetWeddingBackground(@PathVariable Long weddingId) {
+        try {
+            // "" → יתפרש כ-"מחק" ב-Service (שם זה הופך ל-null ואז ל-DEFAULT)
+            weddingService.updateWeddingBackground(weddingId, "", "");
+            return ResponseEntity.noContent().build();
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         }
@@ -534,6 +574,52 @@ public class WeddingAdminController {
         private String backgroundImageUrl;
         private String backgroundVideoUrl;
         private Boolean active;
+
+        /**
+         * DTO – סטטוס רקע של חתונה (לתצוגת אדמין).
+         */
+        public static class BackgroundStatusResponse {
+            private String backgroundImageUrl;
+            private String backgroundVideoUrl;
+            private String backgroundMode;
+            private String effectiveBackgroundUrl;
+            private LocalDateTime updatedAt;
+
+            public String getBackgroundImageUrl() {
+                return backgroundImageUrl;
+            }
+            public void setBackgroundImageUrl(String backgroundImageUrl) {
+                this.backgroundImageUrl = backgroundImageUrl;
+            }
+
+            public String getBackgroundVideoUrl() {
+                return backgroundVideoUrl;
+            }
+            public void setBackgroundVideoUrl(String backgroundVideoUrl) {
+                this.backgroundVideoUrl = backgroundVideoUrl;
+            }
+
+            public String getBackgroundMode() {
+                return backgroundMode;
+            }
+            public void setBackgroundMode(String backgroundMode) {
+                this.backgroundMode = backgroundMode;
+            }
+
+            public String getEffectiveBackgroundUrl() {
+                return effectiveBackgroundUrl;
+            }
+            public void setEffectiveBackgroundUrl(String effectiveBackgroundUrl) {
+                this.effectiveBackgroundUrl = effectiveBackgroundUrl;
+            }
+
+            public LocalDateTime getUpdatedAt() {
+                return updatedAt;
+            }
+            public void setUpdatedAt(LocalDateTime updatedAt) {
+                this.updatedAt = updatedAt;
+            }
+        }
 
         public String getName() { return name; }
         public void setName(String name) { this.name = name; }

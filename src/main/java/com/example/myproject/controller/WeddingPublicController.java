@@ -24,7 +24,7 @@ import java.util.List;
  * - בשלב מאוחר יותר תתווסף שכבת Auth/JWT, ואז לא נצטרך להעביר userId ב־Body.
  */
 @RestController
-@RequestMapping("/api/weddings")
+@RequestMapping("/api/public/weddings")
 public class WeddingPublicController {
 
     private final WeddingService weddingService;

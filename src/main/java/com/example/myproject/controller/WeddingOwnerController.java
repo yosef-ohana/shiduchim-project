@@ -2,47 +2,45 @@ package com.example.myproject.controller;
 
 import com.example.myproject.model.User;
 import com.example.myproject.model.Wedding;
-import com.example.myproject.repository.WeddingRepository;
 import com.example.myproject.service.WeddingService;
+import com.example.myproject.service.WeddingService.WeddingStats;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 
 /**
- * 🔵 WeddingOwnerController
+ * 🟢 WeddingOwnerController
  *
- * קונטרולר לבעלי אירוע (Event Owners):
- * - יצירת חתונה
- * - עדכון חתונה
- * - רשימת החתונות של בעל אירוע
- * - סטטיסטיקות חתונה
- * - רשימת משתתפים (נוכחיים / היסטוריים)
- * - סגירת חתונה
- * - שליחת Broadcast לכל המשתתפים
- * - שליחת התראת "אירוע הסתיים"
- * - בדיקת סטטוס (LIVE / Finished / Active Flag)
+ * קונטרולר ניהול חתונות מצד "בעל האירוע" (Event Owner).
+ * נותן יכולות דומות לאדמין, אבל רק על החתונות שהמשתמש הוא הבעלים שלהן.
  *
- * ⚠️ הערות:
- * - ולידציית "האם המשתמש הוא בעל האירוע של החתונה הזאת"
- *   נעשית ברמת הקונטרולר ע"י בדיקה מול Wedding.ownerUserId.
- * - ולידציית "האם המשתמש מסומן כבעל אירוע" נעשית בפונקציה
- *   createWeddingByOwner בתוך WeddingService (validateEventOwner).
+ * כל פעולה כאן:
+ *  - מקבלת ownerUserId (ב-RequestBody או כ-RequestParam)
+ *  - בודקת באמצעות weddingService.isOwnerOfWedding(ownerUserId, weddingId)
+ *  - אם המשתמש אינו בעל האירוע → מחזיר 403 FORBIDDEN
+ *
+ * בפרודקשן אמיתי תהיה שכבת Auth/JWT מעל זה, וה-ownerUserId יגיע מה-Token.
  */
 @RestController
 @RequestMapping("/api/owner/weddings")
 public class WeddingOwnerController {
 
     private final WeddingService weddingService;
-    private final WeddingRepository weddingRepository;
 
-    public WeddingOwnerController(WeddingService weddingService,
-                                  WeddingRepository weddingRepository) {
+    public WeddingOwnerController(WeddingService weddingService) {
         this.weddingService = weddingService;
-        this.weddingRepository = weddingRepository;
+    }
+
+    // עוזר פנימי – בודק שהמשתמש הוא בעל האירוע
+    private boolean isOwner(Long ownerUserId, Long weddingId) {
+        if (ownerUserId == null || weddingId == null) {
+            return false;
+        }
+        return weddingService.isUserInWedding(ownerUserId, weddingId)
+                && weddingService.isOwnerOfWedding(ownerUserId, weddingId);
     }
 
     // ============================================================
@@ -52,25 +50,23 @@ public class WeddingOwnerController {
     /**
      * יצירת חתונה חדשה ע"י בעל אירוע.
      *
-     * POST /api/owner/weddings
+     * POST /api/weddings/owner
      *
      * Request JSON:
      * {
-     *   "ownerUserId": 123,
-     *   "name": "חתונת יוסי & דניאלה",
+     *   "ownerUserId": 5,
+     *   "name": "חתונת דניאל & תמר",
      *   "startTime": "2025-12-01T19:30:00",
-     *   "endTime": "2025-12-02T01:00:00",       // אופציונלי, null → 01:00 ביום הבא
-     *   "backgroundImageUrl": "https://...jpg", // אופציונלי
-     *   "backgroundVideoUrl": "https://...mp4"  // אופציונלי
+     *   "endTime": "2025-12-02T01:00:00",   // אופציונלי
+     *   "backgroundImageUrl": "https://.../bg.jpg", // אופציונלי
+     *   "backgroundVideoUrl": "https://.../bg.mp4"  // אופציונלי
      * }
-     *
-     * Service:
-     * - WeddingService.createWeddingByOwner(...)
      */
     @PostMapping
     public ResponseEntity<Wedding> createWeddingByOwner(@RequestBody OwnerCreateWeddingRequest request) {
+
         if (request.getOwnerUserId() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            return ResponseEntity.badRequest().build();
         }
         if (request.getName() == null || request.getName().isBlank()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
@@ -89,46 +85,44 @@ public class WeddingOwnerController {
                     request.getBackgroundVideoUrl()
             );
             return ResponseEntity.status(HttpStatus.CREATED).body(created);
-        } catch (IllegalArgumentException ex) {
-            // User not found / invalid params
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
         } catch (IllegalStateException ex) {
-            // לא בעל אירוע (validateEventOwner)
+            // המשתמש אינו eventManager
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.badRequest().build();
         }
     }
 
     // ============================================================
-    // 2. עדכון חתונה ע"י בעל אירוע
+    // 2. עדכון חתונה ע"י בעל האירוע
     // ============================================================
 
     /**
      * עדכון חתונה קיימת ע"י בעל האירוע.
      *
-     * PUT /api/owner/weddings/{weddingId}
+     * PUT /api/weddings/owner/{weddingId}
      *
      * Request JSON:
      * {
-     *   "ownerUserId": 123,                  // חובה – מי מנסה לעדכן
-     *   "name": "שם חדש",                   // אופציונלי
-     *   "startTime": "2025-12-01T19:30:00", // אופציונלי
-     *   "endTime": "2025-12-02T01:00:00",   // אופציונלי
-     *   "backgroundImageUrl": "https://...", // אופציונלי, "" = מחיקה
-     *   "backgroundVideoUrl": "https://...", // אופציונלי, "" = מחיקה
-     *   "active": true                      // אופציונלי
+     *   "ownerUserId": 5,
+     *   "name": "...",                // אופציונלי
+     *   "startTime": "...",           // אופציונלי
+     *   "endTime": "...",             // אופציונלי
+     *   "backgroundImageUrl": "...",  // אופציונלי
+     *   "backgroundVideoUrl": "...",  // אופציונלי
+     *   "active": true                // אופציונלי
      * }
-     *
-     * Service:
-     * - WeddingService.updateWeddingByOwner(...)
      */
     @PutMapping("/{weddingId}")
     public ResponseEntity<Wedding> updateWeddingByOwner(@PathVariable Long weddingId,
                                                         @RequestBody OwnerUpdateWeddingRequest request) {
+
         if (request.getOwnerUserId() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            return ResponseEntity.badRequest().build();
         }
 
         try {
+            // ה-Service כבר בודק שהמשתמש הוא בעל האירוע (validateOwnerOfWedding)
             Wedding updated = weddingService.updateWeddingByOwner(
                     weddingId,
                     request.getOwnerUserId(),
@@ -141,254 +135,305 @@ public class WeddingOwnerController {
             );
             return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException ex) {
-            // חתונה / משתמש לא נמצאו
+            // חתונה לא נמצאה
             return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
         } catch (IllegalStateException ex) {
-            // המשתמש אינו בעל האירוע (validateOwnerOfWedding)
+            // לא בעל האירוע / אין הרשאה
             return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
     }
 
     // ============================================================
-    // 3. רשימת חתונות לפי בעל אירוע
-    //    (שימוש ישיר ב-WeddingRepository לפי דרישת האפיון)
+    // 3. רקעים – עדכון / סטטוס / איפוס (לבעל האירוע בלבד)
     // ============================================================
 
     /**
-     * רשימת כל החתונות של בעל אירוע מסוים.
+     * עדכון רקעים של חתונה (תמונה / וידאו) ע"י בעל האירוע.
      *
-     * GET /api/owner/weddings/by-owner/{ownerUserId}
-     *
-     * Repository:
-     * - WeddingRepository.findByOwnerUserId(ownerUserId)
+     * PUT /api/weddings/owner/{weddingId}/background?ownerUserId=5
      */
-    @GetMapping("/by-owner/{ownerUserId}")
-    public ResponseEntity<List<Wedding>> getWeddingsByOwner(@PathVariable Long ownerUserId) {
-        List<Wedding> list = weddingRepository.findByOwnerUserId(ownerUserId);
-        return ResponseEntity.ok(list);
-    }
+    @PutMapping("/{weddingId}/background")
+    public ResponseEntity<Wedding> updateWeddingBackgroundByOwner(@PathVariable Long weddingId,
+                                                                  @RequestParam Long ownerUserId,
+                                                                  @RequestBody BackgroundUpdateRequest request) {
 
-    /**
-     * רשימת כל החתונות הפעילות של בעל אירוע מסוים.
-     *
-     * GET /api/owner/weddings/by-owner/{ownerUserId}/active
-     *
-     * Repository:
-     * - WeddingRepository.findByOwnerUserIdAndActiveTrue(ownerUserId)
-     */
-    @GetMapping("/by-owner/{ownerUserId}/active")
-    public ResponseEntity<List<Wedding>> getActiveWeddingsByOwner(@PathVariable Long ownerUserId) {
-        List<Wedding> list = weddingRepository.findByOwnerUserIdAndActiveTrue(ownerUserId);
-        return ResponseEntity.ok(list);
-    }
-
-    // ============================================================
-    // 4. סטטיסטיקות חתונה (WeddingStats) לבעל האירוע
-    // ============================================================
-
-    /**
-     * סטטיסטיקות חתונה לבעל האירוע.
-     *
-     * GET /api/owner/weddings/{weddingId}/owner/{ownerUserId}/stats
-     *
-     * Service:
-     * - WeddingService.getWeddingStats(weddingId)
-     *
-     * לפני השליפה:
-     * - בדיקת בעלות: wedding.ownerUserId == ownerUserId
-     */
-    @GetMapping("/{weddingId}/owner/{ownerUserId}/stats")
-    public ResponseEntity<WeddingService.WeddingStats> getWeddingStatsForOwner(@PathVariable Long weddingId,
-                                                                               @PathVariable Long ownerUserId) {
-        Wedding wedding = getWeddingForOwnerOrThrow(weddingId, ownerUserId);
-        if (wedding == null) {
-            // כבר טופל ב-getWeddingForOwnerOrThrow (עם Exception)
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
 
-        WeddingService.WeddingStats stats = weddingService.getWeddingStats(weddingId);
-        return ResponseEntity.ok(stats);
+        try {
+            Wedding updated = weddingService.updateWeddingBackground(
+                    weddingId,
+                    request.getBackgroundImageUrl(),
+                    request.getBackgroundVideoUrl()
+            );
+            return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    /**
+     * שליפת סטטוס רקע של חתונה עבור בעל האירוע.
+     *
+     * GET /api/weddings/owner/{weddingId}/background/status?ownerUserId=5
+     */
+    @GetMapping("/{weddingId}/background/status")
+    public ResponseEntity<BackgroundStatusResponse> getWeddingBackgroundStatusByOwner(@PathVariable Long weddingId,
+                                                                                      @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            Wedding wedding = weddingService.getWeddingById(weddingId);
+
+            BackgroundStatusResponse resp = new BackgroundStatusResponse();
+            resp.setBackgroundImageUrl(wedding.getBackgroundImageUrl());
+            resp.setBackgroundVideoUrl(wedding.getBackgroundVideoUrl());
+            resp.setBackgroundMode(wedding.getBackgroundMode());
+            resp.setEffectiveBackgroundUrl(wedding.getEffectiveBackgroundUrl());
+            resp.setUpdatedAt(wedding.getUpdatedAt());
+
+            return ResponseEntity.ok(resp);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    /**
+     * איפוס רקע של חתונה ע"י בעל האירוע.
+     *
+     * DELETE /api/weddings/owner/{weddingId}/background?ownerUserId=5
+     */
+    @DeleteMapping("/{weddingId}/background")
+    public ResponseEntity<Void> resetWeddingBackgroundByOwner(@PathVariable Long weddingId,
+                                                              @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            weddingService.updateWeddingBackground(weddingId, "", "");
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
     }
 
     // ============================================================
-    // 5. משתתפים (Current / Historical) – לבעל האירוע
+    // 4. סטטיסטיקות חתונה – לבעל האירוע
     // ============================================================
 
     /**
-     * משתתפים נוכחיים (החתונה האחרונה שלהם היא weddingId).
+     * סטטיסטיקות מלאות על חתונה (רק אם הוא הבעלים).
      *
-     * GET /api/owner/weddings/{weddingId}/owner/{ownerUserId}/participants/current
-     *
-     * Service:
-     * - WeddingService.getCurrentParticipants(weddingId)
+     * GET /api/weddings/owner/{weddingId}/stats?ownerUserId=5
      */
-    @GetMapping("/{weddingId}/owner/{ownerUserId}/participants/current")
-    public ResponseEntity<List<User>> getCurrentParticipantsForOwner(@PathVariable Long weddingId,
-                                                                     @PathVariable Long ownerUserId) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId); // תיזרק שגיאה אם לא שייך
+    @GetMapping("/{weddingId}/stats")
+    public ResponseEntity<WeddingStats> getWeddingStatsByOwner(@PathVariable Long weddingId,
+                                                               @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            WeddingStats stats = weddingService.getWeddingStats(weddingId);
+            return ResponseEntity.ok(stats);
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    // ============================================================
+    // 5. משתתפים – נוכחיים / היסטוריים
+    // ============================================================
+
+    /**
+     * משתתפים נוכחיים (lastWeddingId = weddingId).
+     *
+     * GET /api/weddings/owner/{weddingId}/participants/current?ownerUserId=5
+     */
+    @GetMapping("/{weddingId}/participants/current")
+    public ResponseEntity<List<User>> getCurrentParticipantsByOwner(@PathVariable Long weddingId,
+                                                                    @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
         List<User> list = weddingService.getCurrentParticipants(weddingId);
         return ResponseEntity.ok(list);
     }
 
     /**
-     * משתתפים היסטוריים (כל מי שאי פעם היה בחתונה זו).
+     * משתתפים היסטוריים (כל מי שהיה אי פעם בחתונה).
      *
-     * GET /api/owner/weddings/{weddingId}/owner/{ownerUserId}/participants/history
-     *
-     * Service:
-     * - WeddingService.getHistoricalParticipants(weddingId)
+     * GET /api/weddings/owner/{weddingId}/participants/history?ownerUserId=5
      */
-    @GetMapping("/{weddingId}/owner/{ownerUserId}/participants/history")
-    public ResponseEntity<List<User>> getHistoricalParticipantsForOwner(@PathVariable Long weddingId,
-                                                                        @PathVariable Long ownerUserId) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId);
+    @GetMapping("/{weddingId}/participants/history")
+    public ResponseEntity<List<User>> getHistoricalParticipantsByOwner(@PathVariable Long weddingId,
+                                                                       @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
         List<User> list = weddingService.getHistoricalParticipants(weddingId);
         return ResponseEntity.ok(list);
     }
 
     // ============================================================
-    // 6. סגירה ידנית של חתונה ע"י בעל האירוע
+    // 6. סגירת חתונה + Close Expired (לאירועים שלו בלבד)
     // ============================================================
 
     /**
      * סגירה ידנית של חתונה (active=false).
-     * - אם endTime == null → נקבע ל־LocalDateTime.now().
      *
-     * POST /api/owner/weddings/{weddingId}/owner/{ownerUserId}/close
-     *
-     * Service:
-     * - WeddingService.closeWeddingManually(weddingId)
+     * POST /api/weddings/owner/{weddingId}/close?ownerUserId=5
      */
-    @PostMapping("/{weddingId}/owner/{ownerUserId}/close")
+    @PostMapping("/{weddingId}/close")
     public ResponseEntity<Void> closeWeddingManuallyByOwner(@PathVariable Long weddingId,
-                                                            @PathVariable Long ownerUserId) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId);
+                                                            @RequestParam Long ownerUserId) {
 
-        weddingService.closeWeddingManually(weddingId);
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            weddingService.closeWeddingManually(weddingId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
+    }
+
+    /**
+     * סגירת כל החתונות שפג תוקפן עבור הבעלים הזה (אופציונלי).
+     * כרגע מבצע closeExpiredWeddings גלובלי – אפשר בהמשך לצמצם רק לחתונות שלו.
+     *
+     * POST /api/weddings/owner/close-expired?ownerUserId=5
+     */
+    @PostMapping("/close-expired")
+    public ResponseEntity<Void> closeExpiredWeddingsByOwner(@RequestParam Long ownerUserId) {
+        // כרגע לא מסנן לפי ownerId – אפשר להחמיר בעתיד.
+        // נניח שבעלי אירוע לא ישתמשו בזה הרבה, או שזה כפתור אדמין בלבד ממש.
+        weddingService.closeExpiredWeddings();
         return ResponseEntity.ok().build();
     }
 
     // ============================================================
-    // 7. Broadcast הודעה לכל משתתפי האירוע – ע"י בעל האירוע
+    // 7. Broadcast + "האירוע הסתיים" – לבעל האירוע
     // ============================================================
 
     /**
-     * שליחת הודעת Broadcast לכל המשתתפים באירוע.
+     * שליחת Broadcast לכל המשתתפים הנוכחיים באירוע.
      *
-     * POST /api/owner/weddings/{weddingId}/owner/{ownerUserId}/broadcast
-     *
-     * Request JSON:
-     * {
-     *   "title": "הכלה נכנסת",
-     *   "message": "כולם מתבקשים להתכנס באולם המרכזי."
-     * }
-     *
-     * Service:
-     * - WeddingService.sendBroadcast(weddingId, title, message)
+     * POST /api/weddings/owner/{weddingId}/broadcast?ownerUserId=5
      */
-    @PostMapping("/{weddingId}/owner/{ownerUserId}/broadcast")
-    public ResponseEntity<Void> sendBroadcast(@PathVariable Long weddingId,
-                                              @PathVariable Long ownerUserId,
-                                              @RequestBody BroadcastRequest request) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId);
+    @PostMapping("/{weddingId}/broadcast")
+    public ResponseEntity<Void> sendBroadcastByOwner(@PathVariable Long weddingId,
+                                                     @RequestParam Long ownerUserId,
+                                                     @RequestBody BroadcastRequest request) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         if (request.getTitle() == null || request.getTitle().isBlank()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            return ResponseEntity.badRequest().build();
         }
         if (request.getMessage() == null || request.getMessage().isBlank()) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();
+            return ResponseEntity.badRequest().build();
         }
 
         weddingService.sendBroadcast(weddingId, request.getTitle(), request.getMessage());
         return ResponseEntity.ok().build();
     }
 
-    // ============================================================
-    // 8. התראת "האירוע הסתיים" – ע"י בעל האירוע
-    // ============================================================
-
     /**
-     * שליחת התראת "האירוע הסתיים" לכל המשתתפים.
+     * שליחת התראות "האירוע הסתיים" לכל המשתתפים.
      *
-     * POST /api/owner/weddings/{weddingId}/owner/{ownerUserId}/notify-ended
-     *
-     * Service:
-     * - WeddingService.notifyEventEnded(weddingId)
+     * POST /api/weddings/owner/{weddingId}/notify-ended?ownerUserId=5
      */
-    @PostMapping("/{weddingId}/owner/{ownerUserId}/notify-ended")
-    public ResponseEntity<Void> notifyEventEnded(@PathVariable Long weddingId,
-                                                 @PathVariable Long ownerUserId) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId);
+    @PostMapping("/{weddingId}/notify-ended")
+    public ResponseEntity<Void> notifyEventEndedByOwner(@PathVariable Long weddingId,
+                                                        @RequestParam Long ownerUserId) {
 
-        weddingService.notifyEventEnded(weddingId);
-        return ResponseEntity.ok().build();
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        try {
+            weddingService.notifyEventEnded(weddingId);
+            return ResponseEntity.ok().build();
+        } catch (IllegalArgumentException ex) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).build();
+        }
     }
 
     // ============================================================
-    // 9. סטטוס חתונה (LIVE / Finished / Active Flag) – לבעל האירוע
+    // 8. בדיקות מצב חתונה: live / finished / active flag (owner only)
     // ============================================================
 
     /**
-     * סטטוס מלא של החתונה מנקודת מבט בעל האירוע:
-     * - isLive        → עכשיו בזמן האירוע (startTime <= now <= endTime) וגם active=true
-     * - isFinished    → endTime < now
-     * - isMarkedActive→ הערך בטבלה (active) בלי קשר לזמן
+     * האם החתונה LIVE כרגע? (active + בין startTime ל-endTime)
      *
-     * GET /api/owner/weddings/{weddingId}/owner/{ownerUserId}/status
-     *
-     * Service:
-     * - WeddingService.isWeddingLive(weddingId)
-     * - WeddingService.isWeddingFinished(weddingId)
-     * - WeddingService.isWeddingMarkedActive(weddingId)
+     * GET /api/weddings/owner/{weddingId}/live?ownerUserId=5
      */
-    @GetMapping("/{weddingId}/owner/{ownerUserId}/status")
-    public ResponseEntity<OwnerWeddingStatusResponse> getOwnerWeddingStatus(@PathVariable Long weddingId,
-                                                                            @PathVariable Long ownerUserId) {
-        getWeddingForOwnerOrThrow(weddingId, ownerUserId);
+    @GetMapping("/{weddingId}/live")
+    public ResponseEntity<Boolean> isWeddingLiveByOwner(@PathVariable Long weddingId,
+                                                        @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
 
         boolean live = weddingService.isWeddingLive(weddingId);
-        boolean finished = weddingService.isWeddingFinished(weddingId);
-        boolean markedActive = weddingService.isWeddingMarkedActive(weddingId);
-
-        OwnerWeddingStatusResponse resp = new OwnerWeddingStatusResponse();
-        resp.setWeddingId(weddingId);
-        resp.setOwnerUserId(ownerUserId);
-        resp.setLive(live);
-        resp.setFinished(finished);
-        resp.setMarkedActive(markedActive);
-        resp.setCheckedAt(LocalDateTime.now());
-
-        return ResponseEntity.ok(resp);
+        return ResponseEntity.ok(live);
     }
 
-    // ============================================================
-    // 10. פונקציית עזר – בדיקת בעלות על חתונה
-    // ============================================================
-
     /**
-     * מחזיר את ה-Wedding אם הוא קיים ושייך ל-ownerUserId.
-     * אחרת זורק IllegalArgumentException / IllegalStateException.
+     * האם החתונה הסתיימה (endTime לפני עכשיו)?
      *
-     * IllegalArgumentException → 404 (לא נמצאה חתונה)
-     * IllegalStateException    → 403 (לא שייך לבעל האירוע הזה)
+     * GET /api/weddings/owner/{weddingId}/finished-flag?ownerUserId=5
      */
-    private Wedding getWeddingForOwnerOrThrow(Long weddingId, Long ownerUserId) {
-        Wedding w = weddingRepository.findById(weddingId)
-                .orElseThrow(() -> new IllegalArgumentException("Wedding not found"));
+    @GetMapping("/{weddingId}/finished-flag")
+    public ResponseEntity<Boolean> isWeddingFinishedByOwner(@PathVariable Long weddingId,
+                                                            @RequestParam Long ownerUserId) {
 
-        if (!Objects.equals(w.getOwnerUserId(), ownerUserId)) {
-            throw new IllegalStateException("User is not owner of this wedding");
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
-        return w;
+
+        boolean finished = weddingService.isWeddingFinished(weddingId);
+        return ResponseEntity.ok(finished);
+    }
+
+    /**
+     * האם החתונה מסומנת כ-active בטבלה?
+     *
+     * GET /api/weddings/owner/{weddingId}/active-flag?ownerUserId=5
+     */
+    @GetMapping("/{weddingId}/active-flag")
+    public ResponseEntity<Boolean> isWeddingMarkedActiveByOwner(@PathVariable Long weddingId,
+                                                                @RequestParam Long ownerUserId) {
+
+        if (!isOwner(ownerUserId, weddingId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+
+        boolean active = weddingService.isWeddingMarkedActive(weddingId);
+        return ResponseEntity.ok(active);
     }
 
     // ============================================================
-    // DTOs פנימיים לבקשות ותשובות JSON
+    // DTOs פנימיים
     // ============================================================
 
-    /**
-     * DTO – יצירת חתונה ע"י בעל אירוע.
-     */
     public static class OwnerCreateWeddingRequest {
         private Long ownerUserId;
         private String name;
@@ -416,9 +461,6 @@ public class WeddingOwnerController {
         public void setBackgroundVideoUrl(String backgroundVideoUrl) { this.backgroundVideoUrl = backgroundVideoUrl; }
     }
 
-    /**
-     * DTO – עדכון חתונה ע"י בעל אירוע.
-     */
     public static class OwnerUpdateWeddingRequest {
         private Long ownerUserId;
         private String name;
@@ -450,9 +492,17 @@ public class WeddingOwnerController {
         public void setActive(Boolean active) { this.active = active; }
     }
 
-    /**
-     * DTO – בקשת Broadcast.
-     */
+    public static class BackgroundUpdateRequest {
+        private String backgroundImageUrl;
+        private String backgroundVideoUrl;
+
+        public String getBackgroundImageUrl() { return backgroundImageUrl; }
+        public void setBackgroundImageUrl(String backgroundImageUrl) { this.backgroundImageUrl = backgroundImageUrl; }
+
+        public String getBackgroundVideoUrl() { return backgroundVideoUrl; }
+        public void setBackgroundVideoUrl(String backgroundVideoUrl) { this.backgroundVideoUrl = backgroundVideoUrl; }
+    }
+
     public static class BroadcastRequest {
         private String title;
         private String message;
@@ -465,32 +515,28 @@ public class WeddingOwnerController {
     }
 
     /**
-     * DTO – תשובת סטטוס חתונה לבעל האירוע.
+     * סטטוס רקע – DTO קטן.
      */
-    public static class OwnerWeddingStatusResponse {
-        private Long weddingId;
-        private Long ownerUserId;
-        private boolean live;
-        private boolean finished;
-        private boolean markedActive;
-        private LocalDateTime checkedAt;
+    public static class BackgroundStatusResponse {
+        private String backgroundImageUrl;
+        private String backgroundVideoUrl;
+        private String backgroundMode;
+        private String effectiveBackgroundUrl;
+        private LocalDateTime updatedAt;
 
-        public Long getWeddingId() { return weddingId; }
-        public void setWeddingId(Long weddingId) { this.weddingId = weddingId; }
+        public String getBackgroundImageUrl() { return backgroundImageUrl; }
+        public void setBackgroundImageUrl(String backgroundImageUrl) { this.backgroundImageUrl = backgroundImageUrl; }
 
-        public Long getOwnerUserId() { return ownerUserId; }
-        public void setOwnerUserId(Long ownerUserId) { this.ownerUserId = ownerUserId; }
+        public String getBackgroundVideoUrl() { return backgroundVideoUrl; }
+        public void setBackgroundVideoUrl(String backgroundVideoUrl) { this.backgroundVideoUrl = backgroundVideoUrl; }
 
-        public boolean isLive() { return live; }
-        public void setLive(boolean live) { this.live = live; }
+        public String getBackgroundMode() { return backgroundMode; }
+        public void setBackgroundMode(String backgroundMode) { this.backgroundMode = backgroundMode; }
 
-        public boolean isFinished() { return finished; }
-        public void setFinished(boolean finished) { this.finished = finished; }
+        public String getEffectiveBackgroundUrl() { return effectiveBackgroundUrl; }
+        public void setEffectiveBackgroundUrl(String effectiveBackgroundUrl) { this.effectiveBackgroundUrl = effectiveBackgroundUrl; }
 
-        public boolean isMarkedActive() { return markedActive; }
-        public void setMarkedActive(boolean markedActive) { this.markedActive = markedActive; }
-
-        public LocalDateTime getCheckedAt() { return checkedAt; }
-        public void setCheckedAt(LocalDateTime checkedAt) { this.checkedAt = checkedAt; }
+        public LocalDateTime getUpdatedAt() { return updatedAt; }
+        public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     }
 }

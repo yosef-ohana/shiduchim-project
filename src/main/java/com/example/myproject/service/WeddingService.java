@@ -47,7 +47,6 @@ public class WeddingService {
         return createWeddingInternal(name, start, end, adminUserId, bgImage, bgVideo);
     }
 
-    /** יצירת חתונה ע"י בעל אירוע */
     public Wedding createWeddingByOwner(String name,
                                         LocalDateTime start,
                                         LocalDateTime end,
@@ -56,9 +55,14 @@ public class WeddingService {
                                         String bgVideo) {
 
         validateEventOwner(ownerUserId); // הרשאת בעל אירוע
+
         Wedding w = createWeddingInternal(name, start, end, ownerUserId, bgImage, bgVideo);
 
-        w.setOwnerUserId(ownerUserId); // הגדרת בעל האירוע הרשמי
+        // נטען את המשתמש ונגדיר אותו כבעל האירוע (יסנכרן גם ownerUserId)
+        User owner = userRepository.findById(ownerUserId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found"));
+
+        w.setOwner(owner); // כאן שני השדות מסתנכרנים
         return weddingRepository.save(w);
     }
 
@@ -303,12 +307,17 @@ public class WeddingService {
 
     public boolean isOwnerOfWedding(Long userId, Long weddingId) {
 
-        if (userId == null || weddingId == null)
+        if (userId == null || weddingId == null) {
             return false;
+        }
 
         return weddingRepository.findById(weddingId)
-                .map(w -> w.getOwner() != null &&
-                        w.getOwner().getId().equals(userId))
+                .map(w -> {
+                    Long ownerIdFromRelation = (w.getOwner() != null ? w.getOwner().getId() : null);
+                    Long ownerIdFromField = w.getOwnerUserId();
+                    return Objects.equals(ownerIdFromRelation, userId)
+                            || Objects.equals(ownerIdFromField, userId);
+                })
                 .orElse(false);
     }
 
@@ -647,7 +656,11 @@ public class WeddingService {
         if (name != null) w.setName(name);
         if (start != null) w.setStartTime(start);
         if (end != null) w.setEndTime(end);
-        if (ownerUserId != null) w.setOwnerUserId(ownerUserId);
+        if (ownerUserId != null) {
+            User newOwner = userRepository.findById(ownerUserId)
+                    .orElseThrow(() -> new IllegalArgumentException("User not found"));
+            w.setOwner(newOwner); // שוב, מסנכרן owner + ownerUserId
+        }
 
         if (bgImage != null) {
             if (bgImage.isBlank()) w.setBackgroundImageUrl(null);
@@ -729,4 +742,15 @@ public class WeddingService {
 
         return inHistory;
     }
+
+    // ============================================================
+    // 19. שליפת חתונה ע"י ID (לצורכי ניהול / רקעים / דשבורד)
+    // ============================================================
+
+    @Transactional(readOnly = true)
+    public Wedding getWeddingById(Long weddingId) {
+        return weddingRepository.findById(weddingId)
+                .orElseThrow(() -> new IllegalArgumentException("Wedding not found"));
+    }
+    
 }
