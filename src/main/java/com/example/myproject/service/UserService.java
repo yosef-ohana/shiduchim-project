@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Random;
@@ -81,8 +82,10 @@ public class UserService {
     /**
      * בדיקה מרוכזת: האם המשתמש רשאי לבצע פעולות חברתיות במערכת.
      * כל ההיסטוריה נשמרת – אבל ביצוע פעולות חדשות חסום עד שהכל מלא.
+     * כולל חסימה של Admin / Event Manager.
      */
     private void assertUserEligibleForSocialActions(User user) {
+        assertNotSystemUserForSocialActions(user);  // ⬅️ חדש
         assertHasPrimaryPhotoForAction(user);
         assertProfileCompletedForAction(user);
     }
@@ -92,6 +95,51 @@ public class UserService {
      */
     private boolean notEmpty(String s) {
         return s != null && !s.isBlank();
+    }
+
+    // ===================================================================
+    // 🔸 System Users Logic (Admin + Event Manager) – אפיון 2025
+    // ===================================================================
+
+    /**
+     * משתמש מערכת = Admin / Event Manager
+     * משתמשים אלו לא נחשבים "משתמשי שידוכים".
+     */
+    private boolean isSystemUser(User user) {
+        return user.isAdmin() || user.isEventManager();
+    }
+
+    /**
+     * חוסם משתמש מערכת מלבצע פעולות חברתיות (LIKE, DISLIKE, MATCH, FREEZE)
+     */
+    private void assertNotSystemUserForSocialActions(User user) {
+        if (isSystemUser(user)) {
+            throw new IllegalStateException(
+                    "משתמש מערכת (Admin / Event Manager) אינו רשאי לבצע פעולות במנגנון השידוכים."
+            );
+        }
+    }
+
+    /**
+     * חוסם משתמש מערכת מגישה למאגר הגלובלי
+     */
+    private void assertNotSystemUserForGlobalPool(User user) {
+        if (isSystemUser(user)) {
+            throw new IllegalStateException(
+                    "משתמש מערכת לא יכול להיכנס למאגר הכללי."
+            );
+        }
+    }
+
+    /**
+     * חוסם משתמש מערכת מלהיכנס למצב חתונה
+     */
+    private void assertNotSystemUserForWeddingMode(User user) {
+        if (isSystemUser(user)) {
+            throw new IllegalStateException(
+                    "משתמש מערכת לא יכול להיכנס למצב חתונה."
+            );
+        }
     }
 
     // ===================================================================
@@ -366,7 +414,6 @@ public class UserService {
 
         throw new IllegalArgumentException("לא קיים משתמש עם פרטים אלו");
     }
-
     // ======================================================
     // 🔹 בקשת מחיקת חשבון (Soft Delete)
     // ======================================================
@@ -605,6 +652,9 @@ public class UserService {
     public User requestGlobalAccess(Long userId) {
         User user = getUserOrThrow(userId);
 
+        // ⬅️ חדש: חסימת Admin / Event Manager
+        assertNotSystemUserForGlobalPool(user);
+
         if (!user.isFullProfileCompleted() || !user.isHasPrimaryPhoto()) {
             throw new IllegalStateException("כדי לבקש גישה גלובלית יש להשלים פרופיל מלא + תמונה ראשית.");
         }
@@ -632,6 +682,9 @@ public class UserService {
     @Transactional
     public User approveGlobalAccess(Long userId) {
         User user = getUserOrThrow(userId);
+
+        // ⬅️ חדש: חסימת Admin / Event Manager
+        assertNotSystemUserForGlobalPool(user);
 
         if (!user.isFullProfileCompleted() || !user.isHasPrimaryPhoto()) {
             throw new IllegalStateException("אי אפשר לאשר מאגר כללי למשתמש בלי פרופיל מלא + תמונה ראשית.");
@@ -669,7 +722,11 @@ public class UserService {
 
     @Transactional(readOnly = true)
     public List<User> getGlobalPoolUsers() {
-        return userRepository.findByInGlobalPoolTrue();
+        // ⬅️ סינון כפול – גם אם בטעות יסמן אדמין כ-inGlobalPool, לא יחזור החוצה
+        return userRepository.findByInGlobalPoolTrue()
+                .stream()
+                .filter(u -> !isSystemUser(u))
+                .toList();
     }
 
     // ======================================================
@@ -705,7 +762,6 @@ public class UserService {
         target.setUpdatedAt(LocalDateTime.now());
         userRepository.save(target);
     }
-
     // ======================================================
     // 🔹 מצב חתונה / רקע (Wedding Mode vs Global)
     // ======================================================
@@ -714,6 +770,9 @@ public class UserService {
     public User enterWeddingMode(Long userId, Long weddingId) {
 
         User user = getUserOrThrow(userId);
+
+        // ⬅️ חדש: Admin / Event Manager לא נכנסים למצב חתונה
+        assertNotSystemUserForWeddingMode(user);
 
         Wedding wedding = weddingRepository.findById(weddingId)
                 .orElseThrow(() -> new IllegalArgumentException("חתונה לא נמצאה"));
@@ -743,6 +802,9 @@ public class UserService {
 
         User user = getUserOrThrow(userId);
 
+        // ⬅️ חדש: גם כאן הגנה – ליתר ביטחון
+        assertNotSystemUserForWeddingMode(user);
+
         user.setActiveWeddingId(null);
         user.setBackgroundWeddingId(null);
         user.setBackgroundMode("DEFAULT");
@@ -756,6 +818,10 @@ public class UserService {
     @Transactional(readOnly = true)
     public boolean isInWeddingMode(Long userId) {
         User user = getUserOrThrow(userId);
+        // לא חייבים, אבל אם זה SystemUser – תמיד false
+        if (isSystemUser(user)) {
+            return false;
+        }
         return user.getActiveWeddingId() != null;
     }
 
@@ -780,6 +846,7 @@ public class UserService {
             throw new IllegalArgumentException("משתמש אינו יכול לבצע פעולה על עצמו.");
 
         // לפי האפיון – בלי תמונה/פרופיל מלא: מותר רק התחברות ואזור אישי, לא פעולות חברתיות
+        // וגם – משתמש מערכת (Admin / Event Manager) חסום
         assertUserEligibleForSocialActions(actor);
 
         // מנקים פעולות קודמות של actor על target כדי למנוע התנגשות
@@ -1005,7 +1072,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getUsersILiked(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.LIKE
@@ -1016,7 +1083,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getUsersWhoLikedMeAndWaitingForMyResponse(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         // כל הלייקים הפעילים עליי
         List<UserAction> likesOnMe =
@@ -1060,7 +1127,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getFrozenUsers(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.FREEZE
@@ -1071,7 +1138,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<UserAction> getDislikedUsers(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return userActionRepository.findByActorAndActionTypeAndActiveTrue(
                 me, UserActionType.DISLIKE
@@ -1085,7 +1152,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<Match> getMutualMatches(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return matchRepository.findByMutualApprovedTrue()
                 .stream()
@@ -1096,7 +1163,7 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<Match> getActiveMatches(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return matchRepository.findByActiveTrue()
                 .stream()
@@ -1111,10 +1178,58 @@ public class UserService {
     @Transactional(readOnly = true)
     public List<Match> getMatchesWaitingForMyApproval(Long userId) {
         User me = getUserOrThrow(userId);
-        assertUserEligibleForSocialActions(me);
+        assertUserEligibleForSocialActions(me); // כולל חסימת SystemUser
 
         return matchRepository
                 .findByUser1IdAndUser2ApprovedTrueOrUser2IdAndUser1ApprovedTrue(userId, userId);
+    }
+
+    // ======================================================
+    // 🔹 יצירת משתמש "מנהל אירוע" ע"י אדמין
+    // ======================================================
+
+    public User createEventManager(String fullName,
+                                   String phone,
+                                   String email,
+                                   String gender) {
+
+        // 1. יצירת משתמש בסיסי
+        User user = new User();
+        user.setFullName(fullName);
+        user.setPhone(phone);
+        user.setEmail(email);
+        user.setGender(gender);
+
+        // 2. הגדרות מערכתיות
+        user.setEventManager(true);
+        user.setAdmin(false);
+
+        // 3. ביטול כל שדות השידוכים / מאגרים
+        user.setVerified(false);
+        user.setBasicProfileCompleted(false);
+        user.setFullProfileCompleted(false);
+        user.setHasPrimaryPhoto(false);
+
+        user.setInGlobalPool(false);
+        user.setGlobalAccessApproved(false);
+        user.setGlobalAccessRequest(false);
+
+        // לא נראה בתצוגת כרטיסים של החתונה
+        user.setCanViewWedding(false);
+
+        // 4. חתונות / היסטוריה
+        user.setActiveBackgroundWeddingId(null);
+        user.setLastWeddingId(null);
+        user.setFirstWeddingId(null);
+        user.setWeddingsHistory(new ArrayList<>());
+
+        // 5. התראות – נשאיר דיפולטיות (שיהיה אפשר לשלוח אליו אם נרצה)
+        user.setAllowEmailNotifications(true);
+        user.setAllowInAppNotifications(true);
+
+        user.setCreatedAt(LocalDateTime.now());
+
+        return userRepository.save(user);
     }
 
 }

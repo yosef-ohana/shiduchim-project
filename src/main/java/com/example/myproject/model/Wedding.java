@@ -20,7 +20,7 @@ public class Wedding {
     private LocalDateTime startTime;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "owner_id") // לא nullable כדי לא לשבור נתונים קיימים
+    @JoinColumn(name = "owner_id", nullable = true)
     private User owner;
 
     @Column(nullable = false)
