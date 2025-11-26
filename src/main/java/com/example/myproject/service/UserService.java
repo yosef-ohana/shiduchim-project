@@ -720,12 +720,14 @@ public class UserService {
     // 🔹 שליפת משתמשים במאגר הגלובלי (שירות מערכת/אדמין)
     // ======================================================
 
+
     @Transactional(readOnly = true)
     public List<User> getGlobalPoolUsers() {
-        // ⬅️ סינון כפול – גם אם בטעות יסמן אדמין כ-inGlobalPool, לא יחזור החוצה
         return userRepository.findByInGlobalPoolTrue()
                 .stream()
-                .filter(u -> !isSystemUser(u))
+                .filter(User::isFullProfileCompleted)
+                .filter(User::isHasPrimaryPhoto)
+                .filter(u -> userPhotoService.userHasAtLeastOneActivePhoto(u.getId()))
                 .toList();
     }
 
@@ -1230,6 +1232,33 @@ public class UserService {
         user.setCreatedAt(LocalDateTime.now());
 
         return userRepository.save(user);
+    }
+
+// ======================================================
+// 🔹 ניהול דגל Admin למשתמש
+// ======================================================
+
+    @Transactional
+    public User setAdminFlag(Long userId, boolean isAdmin) {
+        User user;
+        try {
+            user = getUserOrThrow(userId);
+        } catch (IllegalArgumentException ex) {
+            return null; // כדי שהקונטרולר יחזיר 404
+        }
+
+        user.setAdmin(isAdmin);
+        user.setUpdatedAt(LocalDateTime.now());
+        return userRepository.save(user);
+    }
+
+// ======================================================
+// 🔹 שליפת כל האדמינים (לדשבורד)
+// ======================================================
+
+    @Transactional(readOnly = true)
+    public List<User> getAdminUsers() {
+        return userRepository.findByAdminTrue();
     }
 
 }

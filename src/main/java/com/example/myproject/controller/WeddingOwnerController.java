@@ -39,8 +39,7 @@ public class WeddingOwnerController {
         if (ownerUserId == null || weddingId == null) {
             return false;
         }
-        return weddingService.isUserInWedding(ownerUserId, weddingId)
-                && weddingService.isOwnerOfWedding(ownerUserId, weddingId);
+        return weddingService.isOwnerOfWedding(ownerUserId, weddingId);
     }
 
     // ============================================================

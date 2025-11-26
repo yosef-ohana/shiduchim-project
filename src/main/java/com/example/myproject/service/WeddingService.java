@@ -40,11 +40,26 @@ public class WeddingService {
                                         LocalDateTime start,
                                         LocalDateTime end,
                                         Long adminUserId,
+                                        Long ownerUserId,
                                         String bgImage,
                                         String bgVideo) {
 
-        validateAdmin(adminUserId); // הרשאת אדמין
-        return createWeddingInternal(name, start, end, adminUserId, bgImage, bgVideo);
+        validateAdmin(adminUserId);
+
+        Wedding w = createWeddingInternal(name, start, end, adminUserId, bgImage, bgVideo);
+
+        if (ownerUserId != null) {
+            User owner = userRepository.findById(ownerUserId)
+                    .orElseThrow(() -> new IllegalArgumentException("Owner user not found"));
+
+            if (!owner.isEventManager()) {
+                throw new IllegalStateException("User is not event manager");
+            }
+
+            w.setOwner(owner);
+        }
+
+        return weddingRepository.save(w);
     }
 
     public Wedding createWeddingByOwner(String name,
@@ -217,27 +232,42 @@ public class WeddingService {
         Wedding wedding = weddingRepository.findById(weddingId)
                 .orElseThrow(() -> new RuntimeException("Wedding not found"));
 
-        if (!wedding.isActive())
-            throw new IllegalStateException("אירוע זה אינו פעיל");
+        LocalDateTime now = LocalDateTime.now();
 
-        // הפעם הראשונה
-        if (user.getFirstWeddingId() == null)
+        // האירוע חייב להיות פעיל (active=true)
+        if (!wedding.isActive()) {
+            throw new IllegalStateException("האירוע אינו פעיל — לא ניתן להצטרף.");
+        }
+
+        // אסור להצטרף אחרי שהאירוע הסתיים
+        if (now.isAfter(wedding.getEndTime())) {
+            throw new IllegalStateException("האירוע כבר הסתיים — אי אפשר להצטרף.");
+        }
+
+        // מותר להצטרף:
+        // - לפני זמן ההתחלה
+        // - בזמן האירוע (LIVE)
+
+        // שמירת כניסה ראשונה
+        if (user.getFirstWeddingId() == null) {
             user.setFirstWeddingId(weddingId);
+        }
 
+        // עדכון כניסה אחרונה
         user.setLastWeddingId(weddingId);
 
-        // היסטוריה
+        // היסטוריית חתונות
         List<Long> history = user.getWeddingsHistory();
         if (history == null) history = new ArrayList<>();
         if (!history.contains(weddingId)) history.add(weddingId);
         user.setWeddingsHistory(history);
 
-        // כניסה למצב Wedding Mode
+        // מעבר למצב Wedding Mode (לתצוגת הרקע)
         user.setActiveBackgroundWeddingId(weddingId);
 
         user.setUpdatedAt(LocalDateTime.now());
         userRepository.save(user);
-        }
+    }
 
     // ============================================================
     // 6. שליפות משתתפים

@@ -42,6 +42,8 @@ public class UserPhotoService {
     // 1. יצירה / העלאה של תמונה
     // ----------------------------------------------------
 
+
+    @Transactional
     public UserPhoto addPhoto(Long userId,
                               String imageUrl,
                               boolean makePrimary,
@@ -51,11 +53,11 @@ public class UserPhotoService {
             throw new IllegalArgumentException("userId and imageUrl are required");
         }
 
-        // טעינת המשתמש מה-DB
+        // טעינת המשתמש
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
 
-        // כמה תמונות פעילות יש כבר למשתמש
+        // ספירת תמונות פעילות
         long activeCount = userPhotoRepository.countByUserAndDeletedFalse(user);
         if (activeCount >= MAX_PHOTOS_PER_USER) {
             throw new IllegalStateException(
@@ -63,7 +65,7 @@ public class UserPhotoService {
             );
         }
 
-        // אם לא קיבלנו positionIndex – נמצא את הבא בתור בקצה הגלריה
+        // חישוב positionIndex אם לא נשלח
         if (positionIndex == null) {
             List<UserPhoto> existing = userPhotoRepository
                     .findByUserAndDeletedFalseOrderByPositionIndexAsc(user);
@@ -79,7 +81,7 @@ public class UserPhotoService {
             positionIndex = nextIndex;
         }
 
-        // יצירת אובייקט תמונה חדש
+        // יצירת תמונה חדשה
         UserPhoto photo = new UserPhoto();
         photo.setUser(user);
         photo.setImageUrl(imageUrl);
@@ -87,11 +89,11 @@ public class UserPhotoService {
         photo.setCreatedAt(LocalDateTime.now());
         photo.setDeleted(false);
 
-        // האם כבר קיימת תמונה ראשית למשתמש?
+        // האם יש כבר primary?
         boolean hasPrimary =
                 userPhotoRepository.existsByUserAndPrimaryPhotoTrueAndDeletedFalse(user);
 
-        // לפי האפיון: אם זו התמונה הראשונה או שהמשתמש ביקש – היא תהיה PRIMARY
+        // קביעת primary
         if (!hasPrimary || makePrimary) {
             photo.setPrimaryPhoto(true);
             clearPrimaryFlagFromOtherPhotos(user);
@@ -102,12 +104,22 @@ public class UserPhotoService {
         // שמירה
         UserPhoto saved = userPhotoRepository.save(photo);
 
-        // ✅ עדכון שדות משתמש (photosCount + hasPrimaryPhoto)
+        // עדכון שדות משתמש
         syncUserPhotoFlagsAfterAdd(user, saved);
+
+        // ------------------------------
+        // 🔵 אפיון 2025 – חזרה אוטומטית לגלובלי
+        // ------------------------------
+        if (user.isFullProfileCompleted() && user.isHasPrimaryPhoto()) {
+            if (user.isGlobalAccessApproved()) {
+                user.setInGlobalPool(true);
+            }
+        }
+
+        userRepository.save(user);
 
         return saved;
     }
-
     /**
      * עדכון photosCount + hasPrimaryPhoto אחרי הוספת תמונה.
      */
@@ -180,7 +192,10 @@ public class UserPhotoService {
     // 3. מחיקה לוגית / מחיקה מלאה
     // ----------------------------------------------------
 
+
+    @Transactional
     public void softDeletePhoto(Long userId, Long photoId) {
+
         if (userId == null || photoId == null) {
             throw new IllegalArgumentException("userId and photoId are required");
         }
@@ -197,11 +212,16 @@ public class UserPhotoService {
 
         boolean wasPrimary = photo.isPrimaryPhoto();
 
+        // -------------------------------
+        // 🔵 מחיקה לוגית של התמונה
+        // -------------------------------
         photo.setDeleted(true);
         photo.setPrimaryPhoto(false);
         userPhotoRepository.save(photo);
 
-        // אם מחקנו primary – ננסה לבחור אחרת (לפי createdAt, כמו שביקשת)
+        // -------------------------------
+        // 🔵 אם זו הייתה תמונה ראשית – מציאת תחליף
+        // -------------------------------
         if (wasPrimary) {
             UserPhoto replacement =
                     userPhotoRepository.findFirstByUserAndDeletedFalseOrderByCreatedAtAsc(user);
@@ -212,8 +232,22 @@ public class UserPhotoService {
             }
         }
 
-        // סנכרון סטטוס המשתמש אחרי מחיקה
+        // -------------------------------
+        // 🔵 עדכון photosCount + hasPrimaryPhoto
+        // -------------------------------
         syncUserPhotoFlagsAfterDelete(user);
+
+        // --------------------------------------------------------
+        // 🔵 קריטי מאוד: ריענון אובייקט המשתמש מה־DB
+        // --------------------------------------------------------
+        // הסיבה: רשימת התמונות user.getPhotos() בזיכרון לא עודכנה,
+        // ולכן ללא ריענון – המערכת עדיין חושבת שהתמונה קיימת ו-primary.
+        user = userRepository.findById(userId).get();
+
+        // --------------------------------------------------------
+        // 🔵 שמירת הנתונים לאחר ריענון מלא
+        // --------------------------------------------------------
+        userRepository.save(user);
     }
 
     /**
