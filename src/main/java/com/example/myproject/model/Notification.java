@@ -1,126 +1,96 @@
 package com.example.myproject.model;
 
+import com.example.myproject.model.enums.NotificationType;
 import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
-@Entity                                 // מייצג טבלת notifications במסד הנתונים
-@Table(name = "notifications")
+@Entity
+@Table(name = "notifications",
+        indexes = {
+                @Index(name = "idx_notification_type", columnList = "type"),
+                @Index(name = "idx_notification_created_at", columnList = "created_at")
+        })
 public class Notification {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
-    private Long id;                    // מזהה התראה ייחודי
+    private Long id;
 
-    // ==============================
-    // 🔵 קשר למשתמש
-    // ==============================
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "recipient_id", nullable = false)
-    private User recipient;             // המשתמש שמקבל את ההתראה
-
-    // ==============================
-    // 🔵 סוג ההתראה וקטגוריה
-    // ==============================
-
+    // =========================================
+    // 🔵 סוג ההתראה (Enum חובה)
+    // =========================================
     @Enumerated(EnumType.STRING)
-    @Column(name = "type", nullable = false, length = 50)
-    private NotificationType type;      // סוג ההתראה (LIKE_RECEIVED, MATCH_MUTUAL, MESSAGE_RECEIVED וכו')
+    @Column(nullable = false, length = 50)
+    private NotificationType type;       // MATCH_MUTUAL, MESSAGE_RECEIVED, PROFILE_APPROVED וכו'
 
-    @Column(name = "category", length = 50)
-    private String category;            // קטגוריה כללית: match / chat / system / profile / wedding
+    // =========================================
+    // 🔵 לתמיכה בהצגת התראה גלובלית אחידה
+    // =========================================
+    @Column(nullable = false, length = 200)
+    private String title;
 
-    @Column(name = "source", length = 50)
-    private String source;              // מקור ההתראה: system / admin / AI / wedding-owner
+    @Column(nullable = false, length = 2000)
+    private String message;
 
-    // ==============================
-    // 🔵 תוכן ההתראה
-    // ==============================
+    @Column(columnDefinition = "TEXT")
+    private String metadata;              // JSON: {"photoUrl": "...", "preview": "..."}
 
-    @Column(name = "title", length = 200)
-    private String title;               // כותרת קצרה של ההתראה
-
-    @Column(name = "message", length = 2000)
-    private String message;             // טקסט מלא שמוצג למשתמש
-
-    @Column(name = "metadata", length = 3000)
-    private String metadata;            // מידע נוסף בפורמט JSON / טקסט חופשי (לשימוש בצד לקוח)
-
-    // ==============================
-    // 🔵 קישורים לישויות אחרות
-    // ==============================
-
+    // =========================================
+    // 🔵 קשרים ישירים (ללא טעינת אובייקט מלא)
+    // =========================================
     @Column(name = "related_user_id")
-    private Long relatedUserId;         // משתמש שקשור להתראה (מי עשה לייק / מי שלח הודעה וכו')
+    private Long relatedUserId;          // מי שלח הודעה / לייק / וכו’
 
     @Column(name = "wedding_id")
-    private Long weddingId;             // חתונה רלוונטית (אם יש)
+    private Long weddingId;
 
     @Column(name = "match_id")
-    private Long matchId;               // התאמה רלוונטית (אם יש)
+    private Long matchId;
 
     @Column(name = "chat_message_id")
-    private Long chatMessageId;         // מזהה הודעת צ'אט רלוונטית (אם ההתראה על הודעה)
+    private Long chatMessageId;
 
-    // ==============================
-    // 🔵 סטטוס ההתראה
-    // ==============================
+    // =========================================
+    // 🔵 מקור ההתראה / קטגוריה
+    // =========================================
+    @Column(length = 50)
+    private String category;             // match / chat / system / ai / wedding / profile
 
-    @Column(name = "is_read", nullable = false)
-    private boolean read = false;       // האם המשתמש כבר "קרא" את ההתראה (נכנס למסך ההתראות)
+    @Column(length = 50)
+    private String source;               // system / admin / ai / wedding-owner
 
-    @Column(name = "popup_seen", nullable = false)
-    private boolean popupSeen = false;  // האם רק ראה פופאפ (Notification Bell / Toast) בלי להיכנס למסך
+    // =========================================
+    // 🔵 עדיפות
+    // =========================================
+    @Column(nullable = false)
+    private int priorityLevel = 1;       // 1 רגיל, 2 חשוב, 3 דחוף
 
-    @Column(name = "is_deleted", nullable = false)
-    private boolean deleted = false;    // מחיקה לוגית – לא להציג למשתמש אבל נשאר ב־DB
-
-    @Column(name = "priority_level", nullable = false)
-    private int priorityLevel = 1;      // רמת עדיפות: 1=רגיל, 2=חשוב, 3=דחוף
-
-    // ==============================
-    // 🔵 זמנים
-    // ==============================
-
+    // =========================================
+    // 🔵 תאריכים
+    // =========================================
     @Column(name = "created_at", nullable = false)
-    private LocalDateTime createdAt = LocalDateTime.now(); // מתי נוצרה ההתראה
-
-    @Column(name = "read_at")
-    private LocalDateTime readAt;       // מתי נקראה (אם נקראה)
+    private LocalDateTime createdAt = LocalDateTime.now();
 
     @Column(name = "updated_at")
-    private LocalDateTime updatedAt;    // מתי עודכנה לאחרונה (למשל שינוי סטטוס)
-
-    // ==============================
-    // 🔵 Hooks – יצירה/עדכון
-    // ==============================
+    private LocalDateTime updatedAt;
 
     @PrePersist
-    protected void onCreate() {         // רץ לפני INSERT
-        if (createdAt == null) {
+    protected void onCreate() {
+        if (createdAt == null)
             createdAt = LocalDateTime.now();
-        }
     }
 
     @PreUpdate
-    protected void onUpdate() {         // רץ לפני UPDATE
-        this.updatedAt = LocalDateTime.now();
-        // אם נקבע ש"התראה נקראה" ואין readAt – נמלא אותו
-        if (read && readAt == null) {
-            this.readAt = LocalDateTime.now();
-        }
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
     }
 
-    // ==============================
+    // =========================================
     // 🔵 בנאים
-    // ==============================
+    // =========================================
+    public Notification() {}
 
-    public Notification() {
-        // בנאי ריק ל-JPA
-    }
-
-    public Notification(User recipient,
-                        NotificationType type,
+    public Notification(NotificationType type,
                         String title,
                         String message,
                         Long relatedUserId,
@@ -132,41 +102,28 @@ public class Notification {
                         String source,
                         int priorityLevel) {
 
-        this.recipient = recipient;           // למי שייכת ההתראה
-        this.type = type;                     // סוג ההתראה
-        this.title = title;                   // כותרת
-        this.message = message;               // הודעה טקסטואלית
-        this.relatedUserId = relatedUserId;   // משתמש נוסף שקשור להתראה
-        this.weddingId = weddingId;           // חתונה רלוונטית
-        this.matchId = matchId;               // התאמה רלוונטית
-        this.chatMessageId = chatMessageId;   // הודעת צ'אט רלוונטית
-        this.metadata = metadata;             // מידע נוסף (JSON)
-
-        this.category = category;             // קטגוריה לוגית
-        this.source = source;                 // מקור ההתראה
-        this.priorityLevel = priorityLevel;   // עדיפות
-
-        this.createdAt = LocalDateTime.now(); // זמן יצירה
-        this.read = false;                    // ברירת מחדל – לא נקרא
+        this.type = type;
+        this.title = title;
+        this.message = message;
+        this.relatedUserId = relatedUserId;
+        this.weddingId = weddingId;
+        this.matchId = matchId;
+        this.chatMessageId = chatMessageId;
+        this.metadata = metadata;
+        this.category = category;
+        this.source = source;
+        this.priorityLevel = priorityLevel;
+        this.createdAt = LocalDateTime.now();
     }
 
-    // ==============================
+    // =========================================
     // 🔵 Getters & Setters
-    // ==============================
+    // =========================================
 
     public Long getId() { return id; }
 
-    public User getRecipient() { return recipient; }
-    public void setRecipient(User recipient) { this.recipient = recipient; }
-
     public NotificationType getType() { return type; }
     public void setType(NotificationType type) { this.type = type; }
-
-    public String getCategory() { return category; }
-    public void setCategory(String category) { this.category = category; }
-
-    public String getSource() { return source; }
-    public void setSource(String source) { this.source = source; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
@@ -189,28 +146,17 @@ public class Notification {
     public Long getChatMessageId() { return chatMessageId; }
     public void setChatMessageId(Long chatMessageId) { this.chatMessageId = chatMessageId; }
 
-    public boolean isRead() { return read; }
-    public void setRead(boolean read) {
-        this.read = read;                     // עדכון דגל "נקרא"
-        if (read && this.readAt == null) {    // אם עכשיו סומן כנקרא ואין readAt – נשמור זמן
-            this.readAt = LocalDateTime.now();
-        }
-    }
+    public String getCategory() { return category; }
+    public void setCategory(String category) { this.category = category; }
 
-    public boolean isPopupSeen() { return popupSeen; }
-    public void setPopupSeen(boolean popupSeen) { this.popupSeen = popupSeen; }
-
-    public boolean isDeleted() { return deleted; }
-    public void setDeleted(boolean deleted) { this.deleted = deleted; }
+    public String getSource() { return source; }
+    public void setSource(String source) { this.source = source; }
 
     public int getPriorityLevel() { return priorityLevel; }
     public void setPriorityLevel(int priorityLevel) { this.priorityLevel = priorityLevel; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-
-    public LocalDateTime getReadAt() { return readAt; }
-    public void setReadAt(LocalDateTime readAt) { this.readAt = readAt; }
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }

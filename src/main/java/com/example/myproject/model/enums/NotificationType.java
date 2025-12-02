@@ -1,0 +1,64 @@
+package com.example.myproject.model.enums;
+
+public enum NotificationType {
+
+    // ===== Match / Likes =====
+    LIKE_RECEIVED,
+    LIKE_BACK_RECEIVED,
+    MATCH_CONFIRMED,
+    MATCH_MUTUAL,
+    MATCH_CLOSED,
+
+    // ===== Chat / Messaging =====
+    FIRST_MESSAGE_RECEIVED,
+    FIRST_MESSAGE_SENT,
+    FIRST_MESSAGE_ACCEPTED,
+    FIRST_MESSAGE_REJECTED,
+
+    CHAT_MESSAGE_RECEIVED,
+    CHAT_APPROVED,
+    CHAT_DECLINED,
+    MESSAGE_RECEIVED,
+    MESSAGE_READ,
+
+    // ===== Weddings =====
+    WEDDING_ENTRY,
+    WEDDING_ENDED,
+    EVENT_BROADCAST,
+    EVENT_REMINDER_START,
+    EVENT_ENDED,
+
+    // Owner-level
+    WEDDING_OWNER_NEW_PARTICIPANT,
+    WEDDING_OWNER_PROFILE_COMPLETED,
+    WEDDING_OWNER_NEW_MATCH,
+    WEDDING_OWNER_GLOBAL_REQUEST,
+
+    // ===== Global Pool =====
+    GLOBAL_ACCESS_REQUESTED,
+    GLOBAL_ACCESS_APPROVED,
+    GLOBAL_ACCESS_DECLINED,
+    ENTERED_GLOBAL_POOL,
+
+    // ===== Profile =====
+    PROFILE_INCOMPLETE_REMINDER,
+    PROFILE_COMPLETED,
+    PROFILE_PHOTO_APPROVED,
+    PROFILE_PHOTO_REJECTED,
+
+    PROFILE_VIEWS_SUMMARY,
+
+    ACCOUNT_DELETION_SCHEDULED,
+    ACCOUNT_DELETION_CANCELLED,
+
+    // ===== System / Admin =====
+    SYSTEM_ANNOUNCEMENT,
+    ADMIN_MESSAGE,
+
+    // ===== AI =====
+    AI_BEHAVIOR_ALERT,
+    AI_SUGGESTED_MATCH,
+
+    // ===== Dev =====
+    TEST_PUSH_NOTIFICATION
+}

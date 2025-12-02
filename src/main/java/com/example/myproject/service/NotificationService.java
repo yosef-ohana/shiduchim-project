@@ -1,7 +1,7 @@
 package com.example.myproject.service;
 
 import com.example.myproject.model.Notification;
-import com.example.myproject.model.NotificationType;
+import com.example.myproject.model.enums.NotificationType;
 import com.example.myproject.model.User;
 import com.example.myproject.repository.NotificationRepository;
 import com.example.myproject.repository.UserRepository;

@@ -1,7 +1,7 @@
 package com.example.myproject.repository;                                // חבילת הריפו
 
 import com.example.myproject.model.Notification;                         // ישות התראה
-import com.example.myproject.model.NotificationType;                     // Enum סוגי התראות
+import com.example.myproject.model.enums.NotificationType;                     // Enum סוגי התראות
 import com.example.myproject.model.User;                                 // ישות משתמש
 import org.springframework.data.jpa.repository.JpaRepository;            // בסיס ל־CRUD
 import org.springframework.stereotype.Repository;                        // מסמן כריפו
