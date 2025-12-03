@@ -1,9 +1,7 @@
 package com.example.myproject.repository;
 
-import com.example.myproject.model.ChatMessage;      // ישות הודעה
-import com.example.myproject.model.Match;            // התאמה
-import com.example.myproject.model.User;             // משתמש
-import com.example.myproject.model.Wedding;          // חתונה
+import com.example.myproject.model.ChatMessage;
+import com.example.myproject.model.enums.ChatMessageType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -14,145 +12,175 @@ import java.util.List;
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
 
     // ============================================================
-    // 🔵 1. בסיס – לפי שולח / מקבל
+    // 🔵 1. שליפות בסיסיות — התכתבויות בין משתמשים
     // ============================================================
 
-    List<ChatMessage> findBySender(User sender);                           // כל מה ששלח משתמש
-    List<ChatMessage> findByRecipient(User recipient);                     // כל מה שקיבל משתמש
+    // כל ההודעות בין שני משתמשים (ללא תלות בכיוון)
+    List<ChatMessage> findBySender_IdAndRecipient_IdOrderByCreatedAtAsc(Long senderId, Long recipientId);
+    List<ChatMessage> findByRecipient_IdAndSender_IdOrderByCreatedAtAsc(Long recipientId, Long senderId);
 
-    List<ChatMessage> findBySenderIdAndRecipientIdOrSenderIdAndRecipientId(
-            Long senderId, Long recipientId,
-            Long recipientId2, Long senderId2
-    );                                                                     // שיחה דו-כיוונית מלאה A↔B
-
-
-    // ============================================================
-    // 🔵 2. הודעות לא נקראו
-    // ============================================================
-
-    List<ChatMessage> findByRecipientIdAndReadFalse(Long recipientId);     // כל הלא נקראו
-    long countByRecipientIdAndReadFalse(Long recipientId);                 // כמות לא נקראו
-
-    List<ChatMessage> findByMatchIdAndRecipientIdAndReadFalse(
-            Long matchId, Long recipientId
-    );                                                                     // לא נקראו בצ'אט התאמה
-
-    long countByMatchIdAndRecipientIdAndReadFalse(
-            Long matchId, Long recipientId
-    );                                                                     // ספירה בצ'אט התאמה
+    // שליפה דו-כיוונית
+    default List<ChatMessage> findConversation(Long userA, Long userB) {
+        List<ChatMessage> a = findBySender_IdAndRecipient_IdOrderByCreatedAtAsc(userA, userB);
+        List<ChatMessage> b = findByRecipient_IdAndSender_IdOrderByCreatedAtAsc(userA, userB);
+        a.addAll(b);
+        a.sort((m1, m2) -> m1.getCreatedAt().compareTo(m2.getCreatedAt()));
+        return a;
+    }
 
 
     // ============================================================
-    // 🔵 3. לפי Match
+    // 🔵 2. שליפות לפי Match (צ'אט מלא אחרי אישור / Match)
     // ============================================================
 
-    List<ChatMessage> findByMatch(Match match);                            // לפי אובייקט Match
-    List<ChatMessage> findByMatchId(Long matchId);                         // לפי מזהה Match
+    // כל ההודעות שקשורות למץ' מסוים
+    List<ChatMessage> findByMatch_IdOrderByCreatedAtAsc(Long matchId);
 
-    List<ChatMessage> findByMatchIdOrderByCreatedAtAsc(Long matchId);      // צ'אט מסודר כרונולוגית
+    // הודעות חדשות לצורך unreadCounter והתרעות
+    List<ChatMessage> findByMatch_IdAndReadFalse(Long matchId);
 
-
-    // ============================================================
-    // 🔵 4. לפי חתונה (Wedding Chat)
-    // ============================================================
-
-    List<ChatMessage> findByWedding(Wedding wedding);                      // כל צ'אט החתונה
-    List<ChatMessage> findByWeddingIdAndSenderId(
-            Long weddingId, Long senderId
-    );                                                                     // הודעות ששלח משתמש באירוע
-
-    List<ChatMessage> findByWeddingIdOrderByCreatedAtAsc(Long weddingId);  // צ'אט אירוע מלא
+    // הודעות שנוצרו אחרי זמן מסוים (לסנכרון WebSocket)
+    List<ChatMessage> findByMatch_IdAndCreatedAtAfter(Long matchId, LocalDateTime time);
 
 
     // ============================================================
-    // 🔵 5. לפי זמנים (Stats / Cleanup)
+    // 🔵 3. הודעה ראשונית (Opening Message — סעיף 1,10,11)
     // ============================================================
 
-    List<ChatMessage> findByCreatedAtAfter(LocalDateTime dt);             // אחרי זמן
-    List<ChatMessage> findByCreatedAtBefore(LocalDateTime dt);            // לפני זמן
+    // שליפת הודעה ראשונית יחידה בין שני משתמשים
+    List<ChatMessage> findBySender_IdAndRecipient_IdAndOpeningMessageTrue(Long senderId, Long recipientId);
 
+    // האם קיימת כבר הודעה ראשונית בין הצדדים?
+    boolean existsBySender_IdAndRecipient_IdAndOpeningMessageTrue(Long senderId, Long recipientId);
 
-    // ============================================================
-    // 🔵 6. תיבת הודעות / Recent Messages
-    // ============================================================
-
-    List<ChatMessage> findTop20BySenderIdAndRecipientIdOrderByCreatedAtDesc(
-            Long senderId, Long recipientId
-    );                                                                     // 20 האחרונות A→B
-
-    ChatMessage findTop1BySenderIdAndRecipientIdOrderByCreatedAtDesc(
-            Long senderId, Long recipientId
-    );                                                                     // ההודעה האחרונה A→B
-
-    List<ChatMessage> findTop50BySenderIdOrRecipientIdOrderByCreatedAtDesc(
-            Long senderId, Long recipientId
-    );                                                                     // inbox — 50 הודעות אחרונות
+    // הודעות ראשוניות ממתינות לאישור
+    List<ChatMessage> findByRecipient_IdAndOpeningMessageTrueAndReadFalse(Long recipientId);
 
 
     // ============================================================
-    // 🔵 7. חיפוש טקסט בצ'אט
+    // 🔵 4. תמיכה בקונטקסט חתונה (Wedding Context — סעיף 13)
     // ============================================================
 
-    List<ChatMessage> findByContentContainingIgnoreCase(String keyword);   // חיפוש טקסט חופשי
+    // כל הודעות החתונה (לדוגמה: LIVE chat overlays בעתיד)
+    List<ChatMessage> findByWedding_Id(Long weddingId);
 
-
-    // ============================================================
-    // 🔵 8. Opening Messages
-    // ============================================================
-
-    boolean existsBySenderIdAndRecipientIdAndOpeningMessageTrue(
-            Long senderId, Long recipientId
-    );                                                                     // האם שלח opening קודם?
-
-    List<ChatMessage> findByRecipientIdAndOpeningMessageTrueAndMatchIsNullAndDeletedFalseOrderByCreatedAtDesc(
-            Long recipientId
-    );                                                                     // הודעות פתיחה שממתינות
+    // הודעות בחתונה בזמן חי (לסטטיסטיקות)
+    List<ChatMessage> findByWedding_IdAndCreatedAtBetween(
+            Long weddingId,
+            LocalDateTime start,
+            LocalDateTime end
+    );
 
 
     // ============================================================
-    // 🔵 9. תמיכה בקבצים (Attachment)
+    // 🔵 5. הודעות אחרונות — רשימת צ'אטים (סעיף 5)
     // ============================================================
 
-    List<ChatMessage> findByAttachmentUrlIsNotNull();                      // הודעות עם קבצים
+    // כל ההודעות שמשתמש מעורב בהן כ־Sender
+    List<ChatMessage> findBySender_Id(Long senderId);
 
-    List<ChatMessage> findByAttachmentType(String type);                   // image / video / file
+    // כל ההודעות שמשתמש מעורב בהן כ־Recipient
+    List<ChatMessage> findByRecipient_Id(Long recipientId);
 
+    // הודעה אחרונה בין שני משתמשים (למיון הרשימה)
+    ChatMessage findTopBySender_IdAndRecipient_IdOrderByCreatedAtDesc(Long senderId, Long recipientId);
+    ChatMessage findTopByRecipient_IdAndSender_IdOrderByCreatedAtDesc(Long recipientId, Long senderId);
 
-    // ============================================================
-    // 🔵 10. מחיקה לוגית
-    // ============================================================
-
-    List<ChatMessage> findByDeletedTrue();                                 // הודעות שנמחקו
-    List<ChatMessage> findByDeletedFalse();                                // הודעות פעילות בלבד
-
-    List<ChatMessage> findByRecipientIdAndDeletedFalse(Long recipientId);  // הודעות שלא נמחקו אצלי
-
-
-    // ============================================================
-    // 🔵 11. System Messages
-    // ============================================================
-
-    List<ChatMessage> findBySystemMessageTrue();                           // הודעות מערכת
-    List<ChatMessage> findBySystemMessageFalse();                          // הודעות רגילות
+    default ChatMessage findLastMessageBetween(Long userA, Long userB) {
+        ChatMessage a = findTopBySender_IdAndRecipient_IdOrderByCreatedAtDesc(userA, userB);
+        ChatMessage b = findTopByRecipient_IdAndSender_IdOrderByCreatedAtDesc(userA, userB);
+        if (a == null) return b;
+        if (b == null) return a;
+        return a.getCreatedAt().isAfter(b.getCreatedAt()) ? a : b;
+    }
 
 
     // ============================================================
-    // 🔵 12. Delivered (ל־WebSocket)
+    // 🔵 6. Unread Messages — (סעיף 3)
     // ============================================================
 
-    List<ChatMessage> findByDeliveredFalseAndRecipientId(Long recipientId); // הודעות שלא נמסרו עדיין
+    // כל ההודעות שלא נקראו אצל משתמש מסוים
+    List<ChatMessage> findByRecipient_IdAndReadFalse(Long recipientId);
+
+    // שיחות שיש בהן הודעות שלא נקראו (לצורך הצגת bubble)
+    List<ChatMessage> findByRecipient_IdAndReadFalseOrderByCreatedAtDesc(Long recipientId);
+
+    // ספירת הודעות לא נקראו
+    long countByRecipient_IdAndReadFalse(Long recipientId);
 
 
     // ============================================================
-    // 🔵 13. Flagged (דיווחים / חשוד)
+    // 🔵 7. Mark As Read — תמיכה מלאה (סעיף 4)
     // ============================================================
 
-    List<ChatMessage> findByFlaggedTrue();                                  // הודעות שסומנו ע"י מודרטור/AI
+    // שליפת כל ההודעות של שיחה מסוימת שטרם נקראו
+    List<ChatMessage> findBySender_IdAndRecipient_IdAndReadFalse(Long senderId, Long recipientId);
+
+    // סימון הודעות נקראו יתבצע ב-Service, לא כאן.
 
 
     // ============================================================
-    // 🔵 14. לפי מזהה שיחה (Conversation ID)
+    // 🔵 8. שליפות לפי Status — System Messages / flagged / deleted
     // ============================================================
 
-    List<ChatMessage> findByConversationIdOrderByCreatedAtAsc(Long cid);    // grouping of chat threads
+    // הודעות מערכת
+    List<ChatMessage> findBySystemMessageTrue();
+
+    // הודעות מדווחות
+    List<ChatMessage> findByFlaggedTrue();
+
+    // הודעות מחוקות לוגית
+    List<ChatMessage> findByDeletedTrue();
+
+    // כל ההודעות שנמחקו לפני זמן מסוים (ל-cleanup)
+    List<ChatMessage> findByDeletedTrueAndDeletedAtBefore(LocalDateTime time);
+
+
+    // ============================================================
+    // 🔵 9. סינון לפי סוג הודעה (Text / Image / File) — סעיף 7
+    // ============================================================
+
+    List<ChatMessage> findByMessageType(ChatMessageType type);
+
+    List<ChatMessage> findByMessageTypeAndSender_Id(ChatMessageType type, Long senderId);
+
+
+    // ============================================================
+    // 🔵 10. לשליפת הודעות לפי conversationId (תמיכה עתידית ב-threading)
+    // ============================================================
+
+    List<ChatMessage> findByConversationIdOrderByCreatedAtAsc(Long conversationId);
+
+    List<ChatMessage> findByConversationIdAndDeletedFalseOrderByCreatedAtAsc(Long conversationId);
+
+
+    // ============================================================
+    // 🔵 11. תמיכה מלאה ב-WebSocket / אינקרמנטים / סנכרון (סעיף 6)
+    // ============================================================
+
+    // כל ההודעות שנוצרו אחרי timestamp, לכל משתמש
+    List<ChatMessage> findByRecipient_IdAndCreatedAtAfter(Long userId, LocalDateTime time);
+
+    // סנכרון typing… ו־delivered דרך קצב הודעות
+    List<ChatMessage> findBySender_IdAndCreatedAtAfter(Long userId, LocalDateTime time);
+
+
+    // ============================================================
+    // 🔵 12. שליפות לפי טווחי תאריכים — סטטיסטיקות
+    // ============================================================
+
+    List<ChatMessage> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    long countByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+
+    // ============================================================
+    // 🔵 13. תמיכה בהתראות NotificationService
+    // ============================================================
+
+    // הודעות חדשות לצורך שליחת Push
+    List<ChatMessage> findByRecipient_IdAndDeliveredFalse(Long recipientId);
+
+    // הודעות שנוצרו במערכת (SYSTEM) לא נשלחו / לא נמסרו
+    List<ChatMessage> findBySystemMessageTrueAndDeliveredFalse();
 }

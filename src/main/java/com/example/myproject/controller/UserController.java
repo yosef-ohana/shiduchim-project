@@ -3,7 +3,7 @@ package com.example.myproject.controller;
 import com.example.myproject.model.Match;
 import com.example.myproject.model.User;
 import com.example.myproject.model.UserAction;
-import com.example.myproject.model.UserActionType;
+import com.example.myproject.model.enums.UserActionType;
 import com.example.myproject.model.Wedding;
 import com.example.myproject.repository.UserRepository;
 import com.example.myproject.repository.WeddingRepository;

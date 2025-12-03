@@ -1,9 +1,8 @@
 package com.example.myproject.repository;
 
 import com.example.myproject.model.UserAction;
-import com.example.myproject.model.UserActionType;
-import com.example.myproject.model.UserActionCategory;
-import com.example.myproject.model.User;
+import com.example.myproject.model.enums.UserActionCategory;
+import com.example.myproject.model.enums.UserActionType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
@@ -13,72 +12,149 @@ import java.util.List;
 @Repository
 public interface UserActionRepository extends JpaRepository<UserAction, Long> {
 
-    // 🔵 פעולות לפי מי שביצע
-    List<UserAction> findByActor(User actor);                        // כל הפעולות שלי
-    List<UserAction> findByActorAndActiveTrue(User actor);           // פעולות פעילות שלי
-    List<UserAction> findByActorAndActionTypeAndActiveTrue(User actor, UserActionType type); // פעולות מסוג מסוים שלי
+    // ============================================================
+    // 🔵 1. פעולות לפי משתמש מבצע (Actor)
+    // ============================================================
 
-    // 🔵 לפי מזהה Actor
-    List<UserAction> findByActorId(Long actorId);
-    List<UserAction> findByActorIdAndActiveTrue(Long actorId);
+    List<UserAction> findByActor_IdOrderByCreatedAtDesc(Long actorId);
+    List<UserAction> findByActor_IdAndActiveTrueOrderByCreatedAtDesc(Long actorId);
+    List<UserAction> findByActor_IdAndCreatedAtAfter(Long actorId, LocalDateTime since);
 
-    // 🔵 פעולות שנעשו עליי
-    List<UserAction> findByTarget(User target);
-    List<UserAction> findByTargetAndActiveTrue(User target);
-    List<UserAction> findByTargetAndActionType(User target, UserActionType type);
 
-    // 🔵 לפי מזהה Target
-    List<UserAction> findByTargetId(Long targetId);
-    List<UserAction> findByTargetIdAndActiveTrue(Long targetId);
+    // ============================================================
+    // 🔵 2. פעולות לפי משתמש יעד (Target)
+    // ============================================================
 
-    // 🔵 פעולה אחרונה בין שני משתמשים
-    UserAction findTopByActorAndTargetAndActionTypeAndActiveTrueOrderByCreatedAtDesc(
-            User actor, User target, UserActionType type
+    List<UserAction> findByTarget_IdOrderByCreatedAtDesc(Long targetId);
+    List<UserAction> findByTarget_IdAndActiveTrueOrderByCreatedAtDesc(Long targetId);
+
+
+    // ============================================================
+    // 🔵 3. פעולות לפי סוג (Like / Dislike / Freeze / SuperLike / Block)
+    // ============================================================
+
+    List<UserAction> findByActor_IdAndActionTypeOrderByCreatedAtDesc(Long actorId, UserActionType type);
+    List<UserAction> findByTarget_IdAndActionTypeOrderByCreatedAtDesc(Long targetId, UserActionType type);
+
+    long countByActor_IdAndActionType(Long actorId, UserActionType type);
+    long countByTarget_IdAndActionType(Long targetId, UserActionType type);
+
+
+    // ============================================================
+    // 🔵 4. פעולות לפי קטגוריה (LIKE / DISLIKE / FREEZE / MAYBE / SUPERLIKE)
+    // ============================================================
+
+    List<UserAction> findByActor_IdAndCategoryOrderByCreatedAtDesc(Long actorId, UserActionCategory category);
+    List<UserAction> findByActor_IdAndCategoryAndActiveTrueOrderByCreatedAtDesc(Long actorId, UserActionCategory category);
+
+
+    // ============================================================
+    // 🔵 5. רשימות מיוחדות — Like / SuperLike / Freeze / Dislike / Received Likes
+    // ============================================================
+
+    // לייקים שאני נתתי
+    List<UserAction> findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(Long actorId, UserActionType type);
+
+    // פריזים / דיסלייקים / סופרלייקים — פשוט לפי ActionType (אותה מתודה)
+
+    // SuperLike שקיבלתי
+    // לייקים שקיבלתי (כולל SuperLike) — לפי קטגוריה
+    List<UserAction> findByTarget_IdAndCategoryOrderByCreatedAtDesc(Long targetId, UserActionCategory category);
+
+
+    // ============================================================
+    // 🔵 6. פעולות בהקשר חתונה / מאגר
+    // ============================================================
+
+    List<UserAction> findByWeddingIdOrderByCreatedAtDesc(Long weddingId);
+    List<UserAction> findByOriginWeddingIdOrderByCreatedAtDesc(Long weddingId);
+
+    List<UserAction> findByActor_IdAndWeddingIdOrderByCreatedAtDesc(Long actorId, Long weddingId);
+    List<UserAction> findByTarget_IdAndWeddingIdOrderByCreatedAtDesc(Long targetId, Long weddingId);
+
+    List<UserAction> findByActor_IdAndOriginWeddingIdOrderByCreatedAtDesc(Long actorId, Long weddingId);
+
+
+    // ============================================================
+    // 🔵 7. פעולות בהקשר Match
+    // ============================================================
+
+    List<UserAction> findByMatchIdOrderByCreatedAtDesc(Long matchId);
+    List<UserAction> findByActor_IdAndMatchId(Long actorId, Long matchId);
+    List<UserAction> findByTarget_IdAndMatchId(Long targetId, Long matchId);
+
+
+    // ============================================================
+    // 🔵 8. קבוצות פעולה (ActionGroup)
+    // ============================================================
+
+    List<UserAction> findByActionGroupId(Long groupId);
+    List<UserAction> findByActor_IdAndActionGroupId(Long actorId, Long groupId);
+
+
+    // ============================================================
+    // 🔵 9. ניטור / Anti-Spam
+    // ============================================================
+
+    List<UserAction> findByActor_IdAndActionTypeAndCreatedAtAfter(
+            Long actorId,
+            UserActionType type,
+            LocalDateTime since
     );
 
-    UserAction findTopByActorAndTargetOrderByCreatedAtDesc(
-            User actor, User target
-    );
+    List<UserAction> findByCreatedAtAfter(LocalDateTime since);
 
-    // 🔵 כל היסטוריית הפעולות ביניהם
-    List<UserAction> findByActorAndTarget(User actor, User target);
 
-    // 🔵 לפי סוג פעולה
-    List<UserAction> findByActionType(UserActionType type);
+    // ============================================================
+    // 🔵 10. פעולות לפי מקור (user / admin / system / ai)
+    // ============================================================
 
-    // 🔵 לפי קטגוריה
-    List<UserAction> findByCategory(UserActionCategory category);
+    List<UserAction> findBySourceOrderByCreatedAtDesc(String source);
+    List<UserAction> findByActor_IdAndSourceOrderByCreatedAtDesc(Long actorId, String source);
 
-    // 🔵 לפי חתונה
-    List<UserAction> findByWeddingId(Long weddingId);
-    List<UserAction> findByOriginWeddingId(Long weddingId);
 
-    // 🔵 לפי מאץ'
-    List<UserAction> findByMatchId(Long matchId);
+    // ============================================================
+    // 🔵 11. חיפוש לפי metadata
+    // ============================================================
 
-    // 🔵 לפי groupId
-    List<UserAction> findByActionGroupId(Long actionGroupId);
+    List<UserAction> findByMetadataContainingIgnoreCase(String text);
 
-    // 🔵 לפי מקור פעולה
-    List<UserAction> findBySource(String source);
 
-    // 🔵 פעולות אוטומטיות
-    List<UserAction> findByAutoGeneratedTrue();
-    List<UserAction> findByAutoGeneratedFalse();
+    // ============================================================
+    // 🔵 12. ACTIVE / INACTIVE
+    // ============================================================
 
-    // 🔵 פעולות פעילות / לא פעילות
-    List<UserAction> findByActiveTrue();
-    List<UserAction> findByActiveFalse();
+    List<UserAction> findByActor_IdAndActiveTrue(Long actorId);
+    List<UserAction> findByActor_IdAndActiveFalse(Long actorId);
 
-    // 🔵 לפי טווחי זמן (סטטיסטיקות / Cron)
-    List<UserAction> findByCreatedAtAfter(LocalDateTime time);
+    List<UserAction> findByTarget_IdAndActiveTrue(Long targetId);
+
+
+    // ============================================================
+    // 🔵 13. פילטרים מתקדמים משולבים
+    // ============================================================
+
+    List<UserAction> findByActor_IdAndActionTypeAndWeddingId(Long actorId, UserActionType type, Long weddingId);
+
+    List<UserAction> findByActor_IdAndCategoryAndWeddingId(Long actorId, UserActionCategory category, Long weddingId);
+
+    List<UserAction> findByActor_IdAndActionTypeAndOriginWeddingId(Long actorId, UserActionType type, Long originWeddingId);
+
+
+    // ============================================================
+    // 🔵 14. ספירות סטטיסטיות
+    // ============================================================
+
+    long countByWeddingId(Long weddingId);
+    long countByActor_IdAndWeddingId(Long actorId, Long weddingId);
+
+    long countByActionType(UserActionType type);
+    long countByCategory(UserActionCategory category);
+
+
+    // ============================================================
+    // 🔵 15. ניקוי לוגים ישנים
+    // ============================================================
+
     List<UserAction> findByCreatedAtBefore(LocalDateTime time);
-    List<UserAction> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
-
-    // ⭐ חדש — רשימות (Like/Freeze/Maybe/Waiting)
-    List<UserAction> findByActorIdAndListName(Long actorId, String listName);  // כל הפעולות ברשימה מסוימת
-    List<UserAction> findByTargetAndActionTypeAndActiveTrue(
-            User target,
-            UserActionType type
-    );
 }

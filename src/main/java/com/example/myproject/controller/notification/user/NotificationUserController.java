@@ -1,7 +1,7 @@
 package com.example.myproject.controller.notification.user;
 
 import com.example.myproject.model.Notification;
-import com.example.myproject.model.NotificationType;
+import com.example.myproject.model.enums.NotificationType;
 import com.example.myproject.service.NotificationService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;

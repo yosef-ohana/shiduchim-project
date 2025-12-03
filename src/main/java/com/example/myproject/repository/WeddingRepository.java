@@ -1,89 +1,178 @@
-package com.example.myproject.repository;                    // חבילה של הריפוזיטורי
+package com.example.myproject.repository;
 
-import com.example.myproject.model.Wedding;                  // ייבוא ישות Wedding
-import org.springframework.data.jpa.repository.JpaRepository; // בסיס ריפו של Spring Data JPA
-import org.springframework.stereotype.Repository;            // מציין שזה Bean של ריפו
+import com.example.myproject.model.Wedding;
+import com.example.myproject.model.enums.BackgroundMode;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;                              // טיפוס זמן ותאריך
-import java.util.List;                                       // רשימת תוצאות
-import java.util.Optional;                                   // עטיפת תוצאה בודדת (עשוי לא להיות)
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Optional;
 
-@Repository                                                  // ריפוזיטורי לניהול טבלת weddings
-public interface WeddingRepository extends JpaRepository<Wedding, Long> { // CRUD + קוואריז מותאמים
+@Repository
+public interface WeddingRepository extends JpaRepository<Wedding, Long> {
 
-    // ===============================
-    // 🔵 בדיקת ייחודיות / שליפה בסיסית
-    // ===============================
+    // ============================================================
+    // 🔵 1. יצירה / שליפה בסיסית
+    // ============================================================
 
-    boolean existsByName(String name);                       // האם קיימת חתונה בשם מסוים (למניעת כפילויות)
+    Optional<Wedding> findById(Long id);
 
-    Optional<Wedding> findById(Long id);                     // שליפה לפי מזהה (סטנדרטי, אבל משאירים למפורש)
+    // שליפה לפי קוד כניסה (ברקוד / קישור)
+    Optional<Wedding> findByAccessCode(String accessCode);
 
-    // ===============================
-    // 🔵 סטטוס כללי של חתונות (פעיל / לא פעיל)
-    // ===============================
+    // כל החתונות הפעילות
+    List<Wedding> findByActiveTrue();
 
-    List<Wedding> findByActiveTrue();                        // כל החתונות הפעילות (active = true)
+    // כל החתונות הלא-פעילות
+    List<Wedding> findByActiveFalse();
 
-    List<Wedding> findByActiveFalse();                       // כל החתונות שאינן פעילות (active = false)
+    // חתונות שנוצרו ע"י מנהל/בעל אירוע מסוים
+    List<Wedding> findByCreatedByUserId(Long userId);
 
+    // חתונות שבבעלות משתמש מסוים
 
-    // ===============================
-    // 🔵 חתונות לפי טווחי תאריכים
-    // ===============================
+    // ============================================================
+    // 🔵 2. סטטוס חתונה לפי זמנים (PLANNED / LIVE / ENDED)
+    // ============================================================
 
-    List<Wedding> findByStartTimeBetween(                    // חתונות שהתחלתן בין שני זמנים
-                                                             LocalDateTime start,                             // התחלה של הטווח
-                                                             LocalDateTime end                                // סוף הטווח
-    );
+    // חתונות שטרם התחילו
+    List<Wedding> findByWeddingDateAfter(LocalDateTime now);
 
-    List<Wedding> findByEndTimeBetween(                      // חתונות שהסופן בין שני זמנים
-                                                             LocalDateTime start,                             // התחלה של הטווח
-                                                             LocalDateTime end                                // סוף הטווח
-    );
+    // חתונות שכבר הסתיימו
+    List<Wedding> findByWeddingEndTimeBefore(LocalDateTime now);
 
-
-    // ===============================
-    // 🔵 חתונות לפי בעל האירוע (ownerUserId)
-    // ===============================
-
-    List<Wedding> findByOwnerUserId(Long ownerUserId);       // כל החתונות של בעל אירוע מסוים
-
-    List<Wedding> findByOwnerUserIdAndActiveTrue(            // חתונות פעילות של בעל אירוע מסוים
-                                                             Long ownerUserId                                 // מזהה בעל האירוע
+    // חתונות שחיות כרגע (LIVE)
+    List<Wedding> findByWeddingDateBeforeAndWeddingEndTimeAfter(
+            LocalDateTime now1,
+            LocalDateTime now2
     );
 
 
-    // ===============================
-    // 🔵 רקעי תמונה / וידאו
-    // ===============================
+    // ============================================================
+    // 🔵 3. חתונות לפי עיר/מיקום/תאריכים
+    // ============================================================
 
-    List<Wedding> findByBackgroundImageUrlIsNotNull();       // חתונות שיש להן תמונת רקע מותאמת
+    List<Wedding> findByCity(String city);
 
-    List<Wedding> findByBackgroundVideoUrlIsNotNull();       // חתונות שיש להן וידאו רקע מותאם
+    List<Wedding> findByHallName(String hallName);
 
+    List<Wedding> findByHallAddressContainingIgnoreCase(String address);
 
-    // ===============================
-    // 🔵 חתונות לפי זמן יצירה / מצב "חי"
-    // ===============================
-
-    List<Wedding> findByCreatedAtAfter(                      // חתונות שנוצרו אחרי זמן מסוים
-                                                             LocalDateTime time                               // זמן סף
+    // חתונות בטווח תאריכים (לסטטיסטיקות/פאנל ניהול)
+    List<Wedding> findByWeddingDateBetween(
+            LocalDateTime start,
+            LocalDateTime end
     );
 
-    List<Wedding> findByStartTimeBeforeAndEndTimeAfter(      // חתונות "חי" עכשיו (בתוך טווח האירוע)
-                                                             LocalDateTime now1,                              // זמן נוכחי (להשוואה ל-startTime)
-                                                             LocalDateTime now2                               // זמן נוכחי (להשוואה ל-endTime)
+    List<Wedding> findByWeddingEndTimeBetween(
+            LocalDateTime start,
+            LocalDateTime end
     );
 
 
-    // ===============================
-    // 🔵 שימושים ל-WeddingService
-    // ===============================
+    // ============================================================
+    // 🔵 4. חתונות + בעלים / הרשאות
+    // ============================================================
 
-    Optional<Wedding> findByIdAndActiveTrue(Long id);        // שליפה של חתונה לפי ID רק אם היא פעילה
+    // חתונות שבעל האירוע (owner) יכול לאשר גלובלי
+    List<Wedding> findByAllowGlobalApprovalsByOwnerTrue();
 
-    List<Wedding> findByEndTimeBefore(LocalDateTime time);   // חתונות שכבר הסתיימו לפני זמן מסוים
+    // חתונות שבהן משתמש מסוים הוא הבעלים הפעיל
+    List<Wedding> findByOwnerUserIdAndActiveTrue(Long ownerUserId);
 
-    List<Wedding> findByStartTimeAfter(LocalDateTime time);  // חתונות שעדיין לא התחילו (עתידיות)
+    // חתונות שהמשתמש הזה מנהל (owner או co-owner בעתיד)
+    List<Wedding> findByOwnerUserId(Long ownerUserId);
+
+
+    // ============================================================
+    // 🔵 5. פעילים בחתונה (Heartbeat / מגבלות)
+    // ============================================================
+
+    // חתונות שנסגרו ידנית
+    List<Wedding> findByManuallyClosedTrue();
+
+    // חתונות שפתוחות לקהל
+    List<Wedding> findByManuallyClosedFalseAndActiveTrue();
+
+    // חתונות שאינן סגורות ידנית אך הסתיימו לפי זמן
+    List<Wedding> findByManuallyClosedFalseAndWeddingEndTimeBefore(LocalDateTime now);
+
+
+    // ============================================================
+    // 🔵 6. פילטרים לאדמין — כל סוגי החתונות
+    // ============================================================
+
+    // כל החתונות שמתוכננות קדימה
+    List<Wedding> findByWeddingDateAfterAndActiveTrue(LocalDateTime now);
+
+    // חתונות חיות של אדמין
+    List<Wedding> findByWeddingDateBeforeAndWeddingEndTimeAfterAndActiveTrue(
+            LocalDateTime now1,
+            LocalDateTime now2
+    );
+
+    // חתונות עבר של אדמין
+
+    // כל החתונות (כולל לא-אקטיביות) לפי בעלים
+    List<Wedding> findByOwnerUserIdOrderByWeddingDateAsc(Long ownerUserId);
+
+
+    // ============================================================
+    // 🔵 7. רקעים — Background / Theme Management
+    // ============================================================
+
+    // חתונות עם רקע מסוג מסוים (IMAGE / VIDEO / DEFAULT)
+    List<Wedding> findByBackgroundMode(BackgroundMode mode);
+
+    // חתונות שיש להן רקע תמונה
+    List<Wedding> findByBackgroundImageUrlIsNotNull();
+
+    // חתונות שיש להן רקע וידאו
+    List<Wedding> findByBackgroundVideoUrlIsNotNull();
+
+
+    // ============================================================
+    // 🔵 8. חיתוכים מורכבים לחוקי המערכת (41 חוקים)
+    // ============================================================
+
+    // חתונות פעילות שבהן מותר לצפות
+    List<Wedding> findByActiveTrueAndManuallyClosedFalse();
+
+    // חתונות חיות (לשימוש בהתראות Match בזמן אמת)
+    List<Wedding> findByActiveTrueAndWeddingDateBeforeAndWeddingEndTimeAfter(
+            LocalDateTime now1,
+            LocalDateTime now2
+    );
+
+    // חתונות שעדיין פתוחות לפעילות גם אחרי הסיום (המאגר נשאר זמין)
+    List<Wedding> findByWeddingEndTimeBeforeAndActiveTrue(LocalDateTime now);
+
+    // חתונות שעומדות להסתיים בקרוב (לצורך התראות/היגיון מערכת)
+    List<Wedding> findByWeddingEndTimeBetweenOrderByWeddingEndTimeAsc(
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
+
+    // ============================================================
+    // 🔵 9. שאילתות סטטיסטיקה — Dashboard Admin / Owner
+    // ============================================================
+
+    long countByCity(String city);
+
+    long countByActiveTrue();
+
+    long countByActiveFalse();
+
+    long countByManuallyClosedTrue();
+
+    long countByWeddingDateBefore(LocalDateTime now);
+
+    long countByWeddingEndTimeBefore(LocalDateTime now);
+
+    long countByWeddingDateAfter(LocalDateTime now);
+
+    // לפי רקע
+    long countByBackgroundMode(BackgroundMode mode);
 }
