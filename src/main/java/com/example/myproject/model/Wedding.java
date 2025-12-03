@@ -32,6 +32,14 @@ public class Wedding {
 
     private LocalDateTime updatedAt;
 
+    // 🎫 קוד כניסה / ברקוד (חובה)
+    @Column(name = "access_code", length = 50, unique = true)
+    private String accessCode;
+
+    // 🛑 האם האירוע נסגר ידנית? (מומלץ)
+    @Column(name = "manually_closed", nullable = false)
+    private boolean manuallyClosed = false;
+
     // =====================================================
     // 🔵 זמן ומיקום
     // =====================================================
@@ -318,6 +326,22 @@ public class Wedding {
     }
     public void setNotes(String notes) {
         this.notes = notes;
+    }
+
+    public String getAccessCode() {
+        return accessCode;
+    }
+
+    public void setAccessCode(String accessCode) {
+        this.accessCode = accessCode;
+    }
+
+    public boolean isManuallyClosed() {
+        return manuallyClosed;
+    }
+
+    public void setManuallyClosed(boolean manuallyClosed) {
+        this.manuallyClosed = manuallyClosed;
     }
 
     // =====================================================

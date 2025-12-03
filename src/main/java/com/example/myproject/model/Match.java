@@ -40,6 +40,10 @@ public class Match {
     @JoinColumn(name = "user2_id", nullable = false)
     private User user2;
 
+    // 👀 מתי המשתמש ראה את ההתאמה לראשונה?
+    @Column(name = "first_seen_at")
+    private LocalDateTime firstSeenAt;
+
     // ======================================================
     // 🔵 חתונות / מקור מפגש
     // ======================================================
@@ -465,6 +469,16 @@ public class Match {
     public boolean isDeleted() {
         return deleted;
     }
+
+    public LocalDateTime getFirstSeenAt() {
+        return firstSeenAt;
+    }
+
+    public void setFirstSeenAt(LocalDateTime firstSeenAt) {
+        this.firstSeenAt = firstSeenAt;
+    }
+
+
     public void setDeleted(boolean deleted) {
         this.deleted = deleted;
         if (deleted && deletedAt == null) {

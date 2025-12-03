@@ -181,6 +181,32 @@ public class User {
     @Column(name = "can_view_wedding", nullable = false)
     private boolean canViewWedding = true;
 
+    // 🔒 נעילת פרופיל אחרי חתונה (חובה)
+    @Column(name = "profile_locked_after_wedding", nullable = false)
+    private boolean profileLockedAfterWedding = false;
+
+    @Column(name = "profile_locked_at")
+    private LocalDateTime profileLockedAt;
+
+    // 🌍 טיימסטמפים של Global Pool (חובה)
+    @Column(name = "global_requested_at")
+    private LocalDateTime globalRequestedAt;
+
+    @Column(name = "global_approved_at")
+    private LocalDateTime globalApprovedAt;
+
+    @Column(name = "global_rejected_at")
+    private LocalDateTime globalRejectedAt;
+
+    // 🕒 עדכון אחרון של פרופיל (מומלץ מאוד)
+    @Column(name = "last_profile_update_at")
+    private LocalDateTime lastProfileUpdateAt;
+
+    // 👥 מי הזמין אותי לאירוע (מומלץ נוסף)
+    @Column(name = "invited_by_user_id")
+    private Long invitedByUserId;
+
+
     // =====================================================
     // 🔵 התראות
     // =====================================================
@@ -906,6 +932,64 @@ public class User {
     public void setWeddingMode(WeddingMode weddingMode) {
         this.weddingMode = weddingMode;
     }
+
+    public boolean isProfileLockedAfterWedding() {
+        return profileLockedAfterWedding;
+    }
+
+    public void setProfileLockedAfterWedding(boolean profileLockedAfterWedding) {
+        this.profileLockedAfterWedding = profileLockedAfterWedding;
+    }
+
+    public LocalDateTime getProfileLockedAt() {
+        return profileLockedAt;
+    }
+
+    public void setProfileLockedAt(LocalDateTime profileLockedAt) {
+        this.profileLockedAt = profileLockedAt;
+    }
+
+    public LocalDateTime getGlobalRequestedAt() {
+        return globalRequestedAt;
+    }
+
+    public void setGlobalRequestedAt(LocalDateTime globalRequestedAt) {
+        this.globalRequestedAt = globalRequestedAt;
+    }
+
+    public LocalDateTime getGlobalApprovedAt() {
+        return globalApprovedAt;
+    }
+
+    public void setGlobalApprovedAt(LocalDateTime globalApprovedAt) {
+        this.globalApprovedAt = globalApprovedAt;
+    }
+
+    public LocalDateTime getGlobalRejectedAt() {
+        return globalRejectedAt;
+    }
+
+    public void setGlobalRejectedAt(LocalDateTime globalRejectedAt) {
+        this.globalRejectedAt = globalRejectedAt;
+    }
+
+    public LocalDateTime getLastProfileUpdateAt() {
+        return lastProfileUpdateAt;
+    }
+
+    public void setLastProfileUpdateAt(LocalDateTime lastProfileUpdateAt) {
+        this.lastProfileUpdateAt = lastProfileUpdateAt;
+    }
+
+    public Long getInvitedByUserId() {
+        return invitedByUserId;
+    }
+
+    public void setInvitedByUserId(Long invitedByUserId) {
+        this.invitedByUserId = invitedByUserId;
+    }
+
+
 
     // =====================================================
     // 🔵 Helpers
