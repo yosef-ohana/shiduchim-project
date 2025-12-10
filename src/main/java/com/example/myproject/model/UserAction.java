@@ -110,6 +110,9 @@ public class UserAction {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Column(name = "reason", length = 500)
+    private String reason;
+
     // ======================================================
     // 🔵 Hooks
     // ======================================================
@@ -216,4 +219,7 @@ public class UserAction {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getReason() { return reason; }
+    public void setReason(String reason) { this.reason = reason; }
 }

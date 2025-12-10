@@ -5,5 +5,6 @@ public enum BackgroundMode {
     DEFAULT,    // רקע ברירת מחדל
     IMAGE,      // רקע תמונה
     VIDEO,      // רקע וידאו
-    GLOBAL      // רקע למאגר הגלובלי
+    GLOBAL,      // רקע למאגר הגלובלי
+    WEDDING
 }

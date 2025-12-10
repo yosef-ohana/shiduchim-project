@@ -7,14 +7,13 @@ import com.example.myproject.model.enums.UserActionType;
 import com.example.myproject.model.Wedding;
 import com.example.myproject.repository.UserRepository;
 import com.example.myproject.repository.WeddingRepository;
-import com.example.myproject.service.UserService;
+import com.example.myproject.service.User.UserService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/users")

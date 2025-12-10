@@ -1,7 +1,9 @@
 package com.example.myproject.model.enums;
 
 public enum ProfileState {
-    NONE,     // מצב התחלתי
-    BASIC,    // פרופיל בסיסי
-    FULL      // פרופיל מלא
+    NONE,
+    BASIC,
+    FULL,
+    BASIC_ONLY,
+    LOCKED_AFTER_WEDDING
 }

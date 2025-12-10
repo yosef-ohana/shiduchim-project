@@ -282,6 +282,36 @@ public class User {
         }
     }
 
+    // =====================================================
+    // 🔵 חסימות משתמשים (Block Lists)
+    // =====================================================
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "user_blocked_users", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "blocked_user_id")
+    private List<Long> blockedUserIds;
+
+    @ElementCollection(fetch = FetchType.LAZY)
+    @CollectionTable(name = "user_blocked_by_users", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "blocked_by_user_id")
+    private List<Long> blockedByUserIds;
+
+    public List<Long> getBlockedUserIds() {
+        return blockedUserIds;
+    }
+
+    public void setBlockedUserIds(List<Long> blockedUserIds) {
+        this.blockedUserIds = blockedUserIds;
+    }
+
+    public List<Long> getBlockedByUserIds() {
+        return blockedByUserIds;
+    }
+
+    public void setBlockedByUserIds(List<Long> blockedByUserIds) {
+        this.blockedByUserIds = blockedByUserIds;
+    }
+
     @PreUpdate
     protected void onUpdate() {
         this.updatedAt = LocalDateTime.now();

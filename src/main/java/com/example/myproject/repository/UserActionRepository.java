@@ -157,4 +157,10 @@ public interface UserActionRepository extends JpaRepository<UserAction, Long> {
     // ============================================================
 
     List<UserAction> findByCreatedAtBefore(LocalDateTime time);
+
+    boolean existsByActorIdAndTargetIdAndActionType(Long actorId, Long targetId, UserActionType type);
+
+    void deleteByActorIdAndTargetIdAndActionType(Long actorId, Long targetId, UserActionType type);
+
+    void deleteByActorIdAndTargetId(Long actorId, Long targetId);
 }

@@ -1,7 +1,7 @@
 package com.example.myproject.controller.userprofile;
 
 import com.example.myproject.dto.UserProfileResponse;
-import com.example.myproject.service.UserService;
+import com.example.myproject.service.User.UserService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
