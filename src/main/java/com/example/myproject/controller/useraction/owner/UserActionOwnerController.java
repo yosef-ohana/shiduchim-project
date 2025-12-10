@@ -1,7 +1,7 @@
 package com.example.myproject.controller.useraction.owner;
 
 import com.example.myproject.model.UserAction;
-import com.example.myproject.model.UserActionType;
+import com.example.myproject.model.enums.UserActionType;
 import com.example.myproject.model.Wedding;
 import com.example.myproject.repository.WeddingRepository;
 import com.example.myproject.service.UserActionService;

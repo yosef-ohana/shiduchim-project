@@ -12,56 +12,78 @@ import java.util.Optional;
 public interface SystemSettingsRepository extends JpaRepository<SystemSettings, Long> {
 
     // ============================================================
-    // 🔵 1. שליפה לפי keyName — הכי חשוב במערכת
+    // 🔵 1. שליפה לפי keyName — בסיסי וקריטי
     // ============================================================
 
     Optional<SystemSettings> findByKeyName(String keyName);
-
     boolean existsByKeyName(String keyName);
-
     void deleteByKeyName(String keyName);
 
 
     // ============================================================
-    // 🔵 2. שליפות לפי תבנית — Admin Dashboard
+    // 🔵 2. תמיכה ב-SCOPE (system / wedding / user)
     // ============================================================
 
-    // כל המפתחות שמתחילים בקידומת (notification.*, wedding.*, system.*, etc.)
+    List<SystemSettings> findByScope(String scope);
+    List<SystemSettings> findByScopeAndKeyName(String scope, String keyName);
+    List<SystemSettings> findByScopeAndKeyNameStartingWith(String scope, String prefix);
+    List<SystemSettings> findByScopeAndKeyNameIn(String scope, List<String> keys);
+    List<SystemSettings> findByScopeAndKeyNameContainingIgnoreCase(String scope, String text);
+
+
+    // ============================================================
+    // 🔵 3. תמיכה ב-Rule Engine (SystemRules §1–41)
+    // ============================================================
+
+    List<SystemSettings> findByRuleId(Integer ruleId);
+    List<SystemSettings> findByRuleGroup(String ruleGroup);
+    List<SystemSettings> findByRuleGroupAndKeyNameStartingWith(String ruleGroup, String prefix);
+
+
+    // ============================================================
+    // 🔵 4. שליפות לפי תבנית — Dashboard
+    // ============================================================
+
     List<SystemSettings> findByKeyNameStartingWith(String prefix);
-
-    // כל ההגדרות שמסתיימות בסיומת מסוימת
     List<SystemSettings> findByKeyNameEndingWith(String suffix);
-
-    // חיפוש מפתח שמכיל מילה מסוימת (לוגיקת חיפוש בדשבורד)
     List<SystemSettings> findByKeyNameContainingIgnoreCase(String text);
 
 
     // ============================================================
-    // 🔵 3. שליפות לפי תיאור (description) — קיים במסמכים
+    // 🔵 5. לפי description — UI search
     // ============================================================
 
     List<SystemSettings> findByDescriptionContainingIgnoreCase(String text);
 
 
     // ============================================================
-    // 🔵 4. ניקיון ותחזוקה
+    // 🔵 6. תחזוקה / ניקוי לפי זמן
     // ============================================================
 
-    // שליפת מפתחות שהשתנו לפני X זמן — לניקוי/בדיקה
     List<SystemSettings> findByUpdatedAtBefore(LocalDateTime time);
-
-    // שליפת מפתחות שהשתנו אחרי זמן מסוים — למעקב ניהול
     List<SystemSettings> findByUpdatedAtAfter(LocalDateTime time);
+    List<SystemSettings> findByCreatedAtBefore(LocalDateTime time);
+
+    List<SystemSettings> findByEnvironmentAndCreatedAtBetween(
+            String environment,
+            LocalDateTime start,
+            LocalDateTime end
+    );
 
 
     // ============================================================
-    // 🔵 5. שימושי מערכת מתקדמים (תשתית ל-AI & Auto-Config)
+    // 🔵 7. תמיכה ב-Auto Refresh / Dynamic Config
     // ============================================================
 
-    // שליפת מפתחות לפי רשימת מפתחות (bulk multi-key)
-    List<SystemSettings> findByKeyNameIn(List<String> keys);
+    List<SystemSettings> findByKeyNameStartingWithAndUpdatedAtAfter(
+            String prefix,
+            LocalDateTime time
+    );
 
-    // כמה הגדרות קיימות לפי prefix (כמות config לדשבורד)
-    long countByKeyNameStartingWith(String prefix);
 
+    // ============================================================
+    // 🔵 8. ברירת מחדל — הגדרה גלובלית אחרונה
+    // ============================================================
+
+    Optional<SystemSettings> findTopByOrderByCreatedAtDesc();
 }

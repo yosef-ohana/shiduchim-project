@@ -30,7 +30,9 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
     // חתונות שנוצרו ע"י מנהל/בעל אירוע מסוים
     List<Wedding> findByCreatedByUserId(Long userId);
 
-    // חתונות שבבעלות משתמש מסוים
+    // חתונות שבבעלות משתמש מסוים (Owner)
+    List<Wedding> findByOwnerUserId(Long ownerUserId);
+
 
     // ============================================================
     // 🔵 2. סטטוס חתונה לפי זמנים (PLANNED / LIVE / ENDED)
@@ -42,7 +44,7 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
     // חתונות שכבר הסתיימו
     List<Wedding> findByWeddingEndTimeBefore(LocalDateTime now);
 
-    // חתונות שחיות כרגע (LIVE)
+    // חתונות LIVE
     List<Wedding> findByWeddingDateBeforeAndWeddingEndTimeAfter(
             LocalDateTime now1,
             LocalDateTime now2
@@ -59,16 +61,9 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
 
     List<Wedding> findByHallAddressContainingIgnoreCase(String address);
 
-    // חתונות בטווח תאריכים (לסטטיסטיקות/פאנל ניהול)
-    List<Wedding> findByWeddingDateBetween(
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<Wedding> findByWeddingDateBetween(LocalDateTime start, LocalDateTime end);
 
-    List<Wedding> findByWeddingEndTimeBetween(
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<Wedding> findByWeddingEndTimeBetween(LocalDateTime start, LocalDateTime end);
 
 
     // ============================================================
@@ -78,77 +73,63 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
     // חתונות שבעל האירוע (owner) יכול לאשר גלובלי
     List<Wedding> findByAllowGlobalApprovalsByOwnerTrue();
 
-    // חתונות שבהן משתמש מסוים הוא הבעלים הפעיל
+    // חתונות שבהן המשתמש הוא הבעלים הפעיל
     List<Wedding> findByOwnerUserIdAndActiveTrue(Long ownerUserId);
-
-    // חתונות שהמשתמש הזה מנהל (owner או co-owner בעתיד)
-    List<Wedding> findByOwnerUserId(Long ownerUserId);
 
 
     // ============================================================
     // 🔵 5. פעילים בחתונה (Heartbeat / מגבלות)
     // ============================================================
 
-    // חתונות שנסגרו ידנית
     List<Wedding> findByManuallyClosedTrue();
 
-    // חתונות שפתוחות לקהל
     List<Wedding> findByManuallyClosedFalseAndActiveTrue();
 
-    // חתונות שאינן סגורות ידנית אך הסתיימו לפי זמן
     List<Wedding> findByManuallyClosedFalseAndWeddingEndTimeBefore(LocalDateTime now);
 
 
     // ============================================================
-    // 🔵 6. פילטרים לאדמין — כל סוגי החתונות
+    // 🔵 6. חתונות — חיתוכים לאדמין
     // ============================================================
 
-    // כל החתונות שמתוכננות קדימה
     List<Wedding> findByWeddingDateAfterAndActiveTrue(LocalDateTime now);
 
-    // חתונות חיות של אדמין
     List<Wedding> findByWeddingDateBeforeAndWeddingEndTimeAfterAndActiveTrue(
             LocalDateTime now1,
             LocalDateTime now2
     );
 
-    // חתונות עבר של אדמין
-
-    // כל החתונות (כולל לא-אקטיביות) לפי בעלים
     List<Wedding> findByOwnerUserIdOrderByWeddingDateAsc(Long ownerUserId);
 
 
     // ============================================================
-    // 🔵 7. רקעים — Background / Theme Management
+    // 🔵 7. רקעים — Background / Themes
     // ============================================================
 
-    // חתונות עם רקע מסוג מסוים (IMAGE / VIDEO / DEFAULT)
     List<Wedding> findByBackgroundMode(BackgroundMode mode);
 
-    // חתונות שיש להן רקע תמונה
     List<Wedding> findByBackgroundImageUrlIsNotNull();
 
-    // חתונות שיש להן רקע וידאו
     List<Wedding> findByBackgroundVideoUrlIsNotNull();
 
 
     // ============================================================
-    // 🔵 8. חיתוכים מורכבים לחוקי המערכת (41 חוקים)
+    // 🔵 8. חיתוכים מורכבים — SystemRules / Monitoring
     // ============================================================
 
-    // חתונות פעילות שבהן מותר לצפות
+    // חתונות פעילות שאינן סגורות (מאגר זמין)
     List<Wedding> findByActiveTrueAndManuallyClosedFalse();
 
-    // חתונות חיות (לשימוש בהתראות Match בזמן אמת)
+    // חתונות חיות (לצורך LIVE MATCH notifications)
     List<Wedding> findByActiveTrueAndWeddingDateBeforeAndWeddingEndTimeAfter(
             LocalDateTime now1,
             LocalDateTime now2
     );
 
-    // חתונות שעדיין פתוחות לפעילות גם אחרי הסיום (המאגר נשאר זמין)
+    // חתונות פתוחות גם אחרי הזמן (מאגר חתונה נשאר זמין)
     List<Wedding> findByWeddingEndTimeBeforeAndActiveTrue(LocalDateTime now);
 
-    // חתונות שעומדות להסתיים בקרוב (לצורך התראות/היגיון מערכת)
+    // חתונות שעומדות להסתיים בקרוב
     List<Wedding> findByWeddingEndTimeBetweenOrderByWeddingEndTimeAsc(
             LocalDateTime start,
             LocalDateTime end
@@ -156,7 +137,7 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
 
 
     // ============================================================
-    // 🔵 9. שאילתות סטטיסטיקה — Dashboard Admin / Owner
+    // 🔵 9. סטטיסטיקות — Dashboard Admin/Owner
     // ============================================================
 
     long countByCity(String city);
@@ -173,6 +154,36 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
 
     long countByWeddingDateAfter(LocalDateTime now);
 
-    // לפי רקע
     long countByBackgroundMode(BackgroundMode mode);
+
+
+    // ============================================================
+    // 🔵 10. שאילתות חסרות – נוספו עכשיו כדי לכסות את מלוא האפיון
+    // ============================================================
+
+    // ✔ חתונות פתוחות לפני תחילת האירוע (מאגר פתוח לפי האפיון החדש)
+    List<Wedding> findByActiveTrueAndWeddingDateAfter(LocalDateTime now);
+
+    // ✔ חתונות שמתנהלות כרגע (לא רק LIVE לפי זמן, אלא ACTIVE + window check)
+    List<Wedding> findByActiveTrueAndWeddingEndTimeAfter(LocalDateTime now);
+
+    // ✔ חתונות PRIVATE / PUBLIC (תמיכה מלאה באפיון הדור הבא)
+    List<Wedding> findByIsPublicTrue();
+    List<Wedding> findByIsPublicFalse();
+
+    // ✔ חתונות לפי AllowCandidatePool (מאגר פתוח במיוחד)
+    List<Wedding> findByAllowCandidatePoolTrue();
+
+    // ✔ חתונות לפי Owner + PLANNED
+    List<Wedding> findByOwnerUserIdAndWeddingDateAfter(Long ownerUserId, LocalDateTime now);
+
+    // ✔ חתונות לפי Owner + ENDED
+    List<Wedding> findByOwnerUserIdAndWeddingEndTimeBefore(Long ownerUserId, LocalDateTime now);
+
+    // ✔ חתונות לפי Owner + LIVE status
+    List<Wedding> findByOwnerUserIdAndWeddingDateBeforeAndWeddingEndTimeAfter(
+            Long ownerUserId,
+            LocalDateTime now1,
+            LocalDateTime now2
+    );
 }

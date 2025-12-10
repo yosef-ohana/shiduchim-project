@@ -5,6 +5,8 @@ import com.example.myproject.model.Notification;
 import com.example.myproject.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -62,7 +64,6 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
     // ============================================================
     // 🔵 5. טווח תאריכים (Notification Center – Filters)
     // ============================================================
-
 
     List<NotificationUser> findByUser_IdAndReadFalseAndCreatedAtBetweenOrderByCreatedAtDesc(
             Long userId,
@@ -163,10 +164,19 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
     // ============================================================
     // 🔵 14. שאילתות לפי סטטוס “Locked” של משתמש בלי צילום
+    //     (התראות קריטיות בלבד בזמן נעילה — pinned או unread, בלי מחוקים/מוסתרים)
     // ============================================================
 
-    // בזמן שהמשתמש נעול — נשתמש כדי לשלוף רק התראות קריטיות
-    List<NotificationUser> findByUser_IdAndPinnedTrueOrReadFalseOrderByCreatedAtDesc(Long userId);
+    @Query("""
+           SELECT nu
+           FROM NotificationUser nu
+           WHERE nu.user.id = :userId
+             AND nu.deleted = false
+             AND nu.hidden = false
+             AND (nu.pinned = true OR nu.read = false)
+           ORDER BY nu.createdAt DESC
+           """)
+    List<NotificationUser> findLockedModeVisibleNotifications(@Param("userId") Long userId);
 
 
     // ============================================================
@@ -179,4 +189,29 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
             Long userId
     );
 
+
+    // ============================================================
+    // 🔵 16. התראות חשובות / High Priority + "Important Only"
+    // ============================================================
+
+    // התראות בעדיפות גבוהה בלבד (למצב Locked / ערוץ קריטי)
+    List<NotificationUser> findByUser_IdAndDeletedFalseAndHiddenFalseAndNotification_PriorityLevelGreaterThanEqualOrderByCreatedAtDesc(
+            Long userId,
+            int minPriority
+    );
+
+    // "Important" — Pinned או Priority גבוה, למסך התראות חשובות בלבד
+    @Query("""
+           SELECT nu
+           FROM NotificationUser nu
+           WHERE nu.user.id = :userId
+             AND nu.deleted = false
+             AND nu.hidden = false
+             AND (nu.pinned = true OR nu.notification.priorityLevel >= :minPriority)
+           ORDER BY nu.createdAt DESC
+           """)
+    List<NotificationUser> findImportantNotificationsForUser(
+            @Param("userId") Long userId,
+            @Param("minPriority") int minPriority
+    );
 }

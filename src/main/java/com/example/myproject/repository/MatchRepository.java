@@ -37,14 +37,12 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // 🔵 2. שליפת התאמות למשתמש מסוים
     // ============================================================
 
-    // כל ההתאמות של משתמש
+    // כל ההתאמות של משתמש (ללא פילטור סטטוס)
     List<Match> findByUser1_IdOrUser2_Id(Long userId1, Long userId2);
 
-    // התאמות פעילות בלבד
-    List<Match> findByStatusAndUser1_IdOrStatusAndUser2_Id(
-            MatchStatus status1, Long userId1,
-            MatchStatus status2, Long userId2
-    );
+    // התאמות פעילות בלבד (לפי סטטוס, לכל אחד מהמשתמשים בנפרד)
+    List<Match> findByStatusAndUser1_Id(MatchStatus status, Long userId);
+    List<Match> findByStatusAndUser2_Id(MatchStatus status, Long userId);
 
     // כל ה־MATCHES שהמשתמש מעורב בהם (גם חסומים / ארכיון)
     List<Match> findByUser1_Id(Long userId);
@@ -55,18 +53,20 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // 🔵 3. שאילתות הדדיות ואישורים
     // ============================================================
 
-    // התאמות הדדיות בלבד (mutualApproved=true)
-    List<Match> findByMutualApprovedTrueAndUser1_IdOrMutualApprovedTrueAndUser2_Id(
-            Long user1Id1, Long user2Id1,
-            Long user1Id2, Long user2Id2
-    );
+    // התאמות הדדיות בלבד (mutualApproved=true) למשתמש, מכל הסטטוסים
+    List<Match> findByMutualApprovedTrueAndUser1_Id(Long userId);
+    List<Match> findByMutualApprovedTrueAndUser2_Id(Long userId);
+
+    // התאמות הדדיות בלבד (mutualApproved=true) + סטטוס מסוים (ACTIVE למשל)
+    List<Match> findByMutualApprovedTrueAndStatusAndUser1_Id(MatchStatus status, Long userId);
+    List<Match> findByMutualApprovedTrueAndStatusAndUser2_Id(MatchStatus status, Long userId);
 
     // מי שהשתיים כבר אישרו (מאשר החלפת סטטוס ל-ACTIVE)
     List<Match> findByStatusAndMutualApprovedTrue(MatchStatus status);
 
 
     // ============================================================
-    // 🔵 4. התאמות לפי Wedding Context (סעיפים 1, 10, 12, 13)
+    // 🔵 4. התאמות לפי Wedding Context (origin / meeting)
     // ============================================================
 
     // התאמות שנוצרו בחלון של חתונה מסוימת (origin wedding)
@@ -83,6 +83,14 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
             MatchSourceType sourceType,
             Long weddingId
     );
+
+    // ✅ השלמות: התאמות של משתמש מסוים בחתונה מסוימת (למסכים "ההתאמות שלי בחתונה X")
+    List<Match> findByUser1_IdAndMeetingWeddingId(Long userId, Long weddingId);
+    List<Match> findByUser2_IdAndMeetingWeddingId(Long userId, Long weddingId);
+
+    // ✅ התאמות של משתמש שנוצרו בהקשר origin של חתונה מסוימת
+    List<Match> findByUser1_IdAndOriginWeddingId(Long userId, Long weddingId);
+    List<Match> findByUser2_IdAndOriginWeddingId(Long userId, Long weddingId);
 
 
     // ============================================================
@@ -109,9 +117,6 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
 
     List<Match> findByStatus(MatchStatus status);
 
-    List<Match> findByStatusAndUser1_Id(MatchStatus status, Long userId);
-    List<Match> findByStatusAndUser2_Id(MatchStatus status, Long userId);
-
 
     // ============================================================
     // 🔵 7. מבוסס תאריכים — לסטטיסטיקות ולמיון
@@ -126,6 +131,13 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // התאמות שתאריך ההודעה האחרונה שלהן בטווח
     List<Match> findByLastMessageAtBetween(LocalDateTime start, LocalDateTime end);
 
+    // ✅ התאמות של חתונה מסוימת שנוצרו בטווח זמן (לתמיכה בהתראות "Match בחתונה חיה")
+    List<Match> findByMeetingWeddingIdAndCreatedAtBetween(
+            Long weddingId,
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
 
     // ============================================================
     // 🔵 8. תמיכה לצ'אט / unread count
@@ -139,8 +151,8 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // ============================================================
     // 🔵 9. Matching Engine / Recommended Matches
     // ============================================================
-    // ❗ פה הריפו משמש כתמיכה בלבד – החישוב האמיתי נעשה ב-Service ו-SystemRules.
-    // ❗ אבל אנחנו צריכים יכולת לשלוף התאמות קיימות כדי למנוע הצעות כפולות.
+    // ❗ הריפו משמש כתמיכה בלבד – החישוב האמיתי נעשה ב-Service ו-SystemRules.
+    // ❗ כאן בעיקר חשוב למנוע כפילויות.
 
     boolean existsByUser1_IdAndUser2_IdAndDeletedFalse(Long u1, Long u2);
     boolean existsByUser2_IdAndUser1_IdAndDeletedFalse(Long u1, Long u2);
@@ -171,10 +183,10 @@ public interface MatchRepository extends JpaRepository<Match, Long> {
     // 🔵 11. תמיכה מלאה ב-UserAction ו-SystemRules
     // ============================================================
 
-    // כל ההתאמות הפעילות שלא חסומות/מוקפאות
+    // כל ההתאמות לפי סטטוסים (למשל ACTIVE + FROZEN) – בלי קשר למשתמש
     List<Match> findByStatusIn(List<MatchStatus> statuses);
 
-    // כל המץ' שנוגעים במשתמש מסוים ופעילים
+    // כל המץ' שנוגעים במשתמש מסוים ופעילים (כמה סטטוסים יחד)
     List<Match> findByUser1_IdAndStatusIn(Long userId, List<MatchStatus> statuses);
     List<Match> findByUser2_IdAndStatusIn(Long userId, List<MatchStatus> statuses);
 

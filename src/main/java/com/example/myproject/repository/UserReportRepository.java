@@ -14,13 +14,21 @@ import java.util.Optional;
 public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
     // ============================================================
-    // 🔵 1. שליפות בסיסיות — לפי דיווחים של משתמש
+    // 🔵 1. שליפות בסיסיות — לפי דיווחים של משתמש (Reporter)
     // ============================================================
 
     List<UserReport> findByReporterIdOrderByCreatedAtDesc(Long reporterId);
 
-    // כמה דיווחים המשתמש שלח (למניעת abuse)
     long countByReporterId(Long reporterId);
+
+
+    // דירוג אמינות מדווח (Credibility Score)
+    long countByReporterIdAndStatus(Long reporterId, ReportStatus status);
+
+    List<UserReport> findByReporterIdAndStatusOrderByCreatedAtDesc(
+            Long reporterId,
+            ReportStatus status
+    );
 
 
     // ============================================================
@@ -29,8 +37,13 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
     List<UserReport> findByTargetIdOrderByCreatedAtDesc(Long targetId);
 
-    // כמה דיווחים קיבל המשתמש (לבדיקת משתמש בעייתי)
     long countByTargetId(Long targetId);
+
+
+    // כמה דיווחים קיבל המשתמש בתקופה מסוימת (Escalation Rule)
+    long countByTargetIdAndCreatedAtAfter(Long targetId, LocalDateTime since);
+
+    List<UserReport> findByTargetIdAndCreatedAtAfter(Long targetId, LocalDateTime since);
 
 
     // ============================================================
@@ -42,12 +55,13 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     long countByStatus(ReportStatus status);
 
     Optional<UserReport> findTopByTargetIdAndStatusOrderByCreatedAtDesc(
-            Long targetId, ReportStatus status
+            Long targetId,
+            ReportStatus status
     );
 
 
     // ============================================================
-    // 🔵 4. לפי סוג דיווח (SPAM / FAKE_PROFILE / INAPPROPRIATE_PHOTO וכו')
+    // 🔵 4. לפי סוג דיווח (SPAM / FAKE_PROFILE / HARASSMENT / PHOTO ...)
     // ============================================================
 
     List<UserReport> findByTypeOrderByCreatedAtDesc(ReportType type);
@@ -60,18 +74,20 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     // ============================================================
 
     List<UserReport> findByTargetIdAndTypeOrderByCreatedAtDesc(
-            Long targetId, ReportType type
+            Long targetId,
+            ReportType type
     );
 
     List<UserReport> findByTargetIdAndStatusOrderByCreatedAtDesc(
-            Long targetId, ReportStatus status
+            Long targetId,
+            ReportStatus status
     );
 
     long countByTargetIdAndType(Long targetId, ReportType type);
 
 
     // ============================================================
-    // 🔵 6. דיווחים שקשורים לתמונות (INAPPROPRIATE_PHOTO)
+    // 🔵 6. דיווחים הקשורים לתמונות (INAPPROPRIATE_PHOTO)
     // ============================================================
 
     List<UserReport> findByTypeAndTargetIdOrderByCreatedAtDesc(
@@ -79,7 +95,6 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
             Long targetId
     );
 
-    // למערכת התמונות: “כמה דיווחים על תמונה/משתמש לאחרונה”
     long countByTargetIdAndTypeAndCreatedAtAfter(
             Long targetId,
             ReportType type,
@@ -88,7 +103,7 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
 
     // ============================================================
-    // 🔵 7. דיווחים לפי תאריך / Filters ל־Dashboard
+    // 🔵 7. לפי תאריך — Dashboard Filters
     // ============================================================
 
     List<UserReport> findByCreatedAtBetweenOrderByCreatedAtDesc(
@@ -100,26 +115,22 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
 
     // ============================================================
-    // 🔵 8. טיפול אדמין (InReview / Closed / Rejected)
+    // 🔵 8. טיפול אדמין (handledByAdminId)
     // ============================================================
 
-    // מי טיפל
     List<UserReport> findByHandledByAdminIdOrderByUpdatedAtDesc(Long adminId);
 
-    // כמה דיווחים אדמין טיפל בהם
     long countByHandledByAdminId(Long adminId);
 
 
     // ============================================================
-    // 🔵 9. שאילתות מתקדמות לתהליכים אוטומטיים
+    // 🔵 9. אוטומציה / AI / Escalation
     // ============================================================
 
-    // כל התיקים הפתוחים → לצורך תור טיפול
-    List<UserReport> findByStatusInOrderByCreatedAtAsc(
-            List<ReportStatus> statuses
-    );
+    // תור טיפול — כל התיקים הפתוחים
+    List<UserReport> findByStatusInOrderByCreatedAtAsc(List<ReportStatus> statuses);
 
-    // כל הדיווחים האחרונים על אותו משתמש/סוג → למודול ה-AI
+    // לוגיקה של AI (קיבוץ אירועים)
     List<UserReport> findByTargetIdAndTypeAndCreatedAtBetween(
             Long targetId,
             ReportType type,
@@ -129,10 +140,9 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
 
     // ============================================================
-    // 🔵 10. תמיכה במנגנון אנטי-ספאם
+    // 🔵 10. אנטי-ספאם — Reporter Abuse Prevention
     // ============================================================
 
-    // כמה דיווחים המשתמש שלח בטווח זמן מסוים
     long countByReporterIdAndCreatedAtAfter(
             Long reporterId,
             LocalDateTime since
@@ -140,7 +150,7 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
 
     // ============================================================
-    // 🔵 11. ניקוי לוגים (Cleaners / CRON)
+    // 🔵 11. ניקוי דיווחים ישנים (CRON)
     // ============================================================
 
     List<UserReport> findByCreatedAtBefore(LocalDateTime olderThan);
@@ -149,27 +159,19 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
 
     // ============================================================
-    // 🔵 12. איתור מקרה “חמור” — לבקרה
+    // 🔵 12. דיווחים חמורים — CE Level Alerts
     // ============================================================
 
-    // דיווחים חמורים (ספאם רב, FAKE_PROFILE, הטרדה)
     List<UserReport> findByTypeInOrderByCreatedAtDesc(List<ReportType> types);
 
-    // כמה CE-level reports קיבל משתמש
-    long countByTargetIdAndTypeIn(
-            Long targetId,
-            List<ReportType> types
-    );
+    long countByTargetIdAndTypeIn(Long targetId, List<ReportType> types);
 
 
     // ============================================================
-    // 🔵 13. שליפה חכמה — לצורך ניתוח אגרגציוני חודשי
+    // 🔵 13. שליפות אגרגטיביות — Monthly Analytics
     // ============================================================
 
-    long countByTypeAndStatus(
-            ReportType type,
-            ReportStatus status
-    );
+    long countByTypeAndStatus(ReportType type, ReportStatus status);
 
     long countByTypeAndCreatedAtBetween(
             ReportType type,

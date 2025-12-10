@@ -65,4 +65,37 @@ public interface NotificationPreferencesRepository extends JpaRepository<Notific
 
     // הגדרות ישנות – לצורך אנליזה/ניקוי/מיגרציה
     List<NotificationPreferences> findByUpdatedAtBefore(LocalDateTime time);
+
+
+    // ============================================================
+    // 🔵 6. Quiet Hours — שעות שקט
+    // ============================================================
+
+    // כל מי שהפעיל "שעות שקט" (החישוב אם כרגע שקט נעשה ב-Service / SystemRules)
+    List<NotificationPreferences> findByQuietHoursEnabledTrue();
+
+
+    // ============================================================
+    // 🔵 7. ערוצי התראה (Channels) — Push / Email / In-App
+    // ============================================================
+
+    // משתמשים המאפשרים Push Notifications
+    List<NotificationPreferences> findByEnablePushTrue();
+
+    // משתמשים המאפשרים Email Notifications
+    List<NotificationPreferences> findByEnableEmailTrue();
+
+    // משתמשים המאפשרים In-App בלבד (או כחלק מערוצים נוספים)
+    List<NotificationPreferences> findByEnableInAppTrue();
+
+
+    // ============================================================
+    // 🔵 8. Anti-Spam / Throttle — הגבלת עומס התראות
+    // ============================================================
+
+    // משתמשים שנמצאים כרגע במצב "throttled" (קיבלו יותר מדי התראות)
+    List<NotificationPreferences> findByThrottledTrue();
+
+    // משתמשים שה-throttle שלהם עדיין פעיל בזמן נתון
+    List<NotificationPreferences> findByThrottleUntilAfter(LocalDateTime now);
 }
