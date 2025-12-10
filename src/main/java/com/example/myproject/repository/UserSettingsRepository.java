@@ -31,7 +31,7 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
 
     long countByDefaultMode(DefaultMode defaultMode);
 
-    // ⭐ חדש — נדרש ע"י SystemRules לזיהוי משתמשים שלא תואמים את ברירת המחדל
+    // משתמשים שההגדרה שלהם שונה מהברירת־מחדל (לניתוח SystemRules)
     List<UserSettings> findByDefaultModeNot(DefaultMode defaultMode);
 
 
@@ -70,7 +70,7 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
 
     // ============================================================
     // 🔵 6. ⚠ Lock Mode After Wedding — תמיכה מלאה בחוקי מערכת
-    //     (Rules: 14, 19, 27 — משתמש נעול עד שיסיים פרופיל מלא)
+    //     (Rules: 14, 19, 23, 27 — משתמש נעול עד שיסיים פרופיל מלא)
     // ============================================================
 
     // מי מוגדר כנעול אחרי חתונה
@@ -79,6 +79,29 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
     // מי עדיין נעול (lockedUntil > now)
     List<UserSettings> findByLockedAfterWeddingTrueAndLockedUntilAfter(LocalDateTime now);
 
-    // כמה משתמשים במצב Lock
+    // כמה משתמשים במצב Lock (ללא קשר ל־lockedUntil)
     long countByLockedAfterWeddingTrue();
+
+
+    // ============================================================
+    // 🔵 7. תחזוקה / ניקוי לפי זמן
+    // ============================================================
+
+    List<UserSettings> findByUpdatedAtAfter(LocalDateTime time);
+
+    List<UserSettings> findByCreatedAtBefore(LocalDateTime time);
+
+
+    // ============================================================
+    // 🔵 8. סטטיסטיקות מתקדמות — Anti-Spam & Lock
+    // ============================================================
+
+    // כמה משתמשים עם Anti-Spam אוטומטי ובקירור לייק קטן/שווה לערך מסוים
+    long countByAutoAntiSpamTrueAndLikeCooldownSecondsLessThanEqual(Integer seconds);
+
+    // כמה משתמשים עם Anti-Spam אוטומטי ובקירור הודעות קטן/שווה לערך מסוים
+    long countByAutoAntiSpamTrueAndMessageCooldownSecondsLessThanEqual(Integer seconds);
+
+    // כמה משתמשים עדיין נעולים כרגע (lockedAfterWedding + lockedUntil > now)
+    long countByLockedAfterWeddingTrueAndLockedUntilAfter(LocalDateTime now);
 }

@@ -1,8 +1,6 @@
 package com.example.myproject.repository;
 
 import com.example.myproject.model.NotificationUser;
-import com.example.myproject.model.Notification;
-import com.example.myproject.model.User;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Query;
@@ -73,7 +71,7 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 6. קיבוץ התראות (סעיף 13 – Aggregation)
+    // 🔵 6. קיבוץ התראות (Aggregation)
     // ============================================================
 
     long countByUser_IdAndReadFalseAndCreatedAtAfter(Long userId, LocalDateTime since);
@@ -85,21 +83,22 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
     // 🔵 7. ערוצים — delivered / not delivered (WebSocket/PUSH)
     // ============================================================
 
+    // כל מה שכרגע “חי” למרכז ההתראות (לא מחוק, לא מוסתר, לא נקרא)
     List<NotificationUser> findByUser_IdAndDeletedFalseAndReadFalseAndHiddenFalseOrderByCreatedAtDesc(Long userId);
 
-    // התראות שממתינות לשליחה למשתמש (PUSH)
+    // התראות שממתינות להצגת popup למשתמש
     List<NotificationUser> findByUser_IdAndPopupSeenFalse(Long userId);
 
 
     // ============================================================
-    // 🔵 8. רק התראות שלא נמחקו / לא הוסתרו (ל־UnifiedUserCard)
+    // 🔵 8. רק התראות שלא נמחקו / לא הוסתרו (ל־Notification Center)
     // ============================================================
 
     List<NotificationUser> findByUser_IdAndDeletedFalseAndHiddenFalseOrderByCreatedAtDesc(Long userId);
 
 
     // ============================================================
-    // 🔵 9. פעולות Read / Seen / Pinned / Snoozed לפי זמן
+    // 🔵 9. פעולות Read / Snoozed לפי זמן
     // ============================================================
 
     List<NotificationUser> findByUser_IdAndReadAtAfter(Long userId, LocalDateTime since);
@@ -125,17 +124,17 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 11. שאילתות עומק — Wedding/Global Mode (SystemRules)
+    // 🔵 11. חתונה / אחרי חתונה (Wedding/Global Mode)
     // ============================================================
 
-    // התראות בזמן חתונה פעילה
+    // התראות בזמן חתונה פעילה (לפי טווח זמן)
     List<NotificationUser> findByUser_IdAndCreatedAtBetweenOrderByCreatedAtDesc(
             Long userId,
             LocalDateTime weddingStart,
             LocalDateTime weddingEnd
     );
 
-    // התראות שהתקבלו אחרי החתונה (Lock Mode)
+    // התראות שהתקבלו אחרי החתונה (מצב Lock עד השלמת פרופיל)
     List<NotificationUser> findByUser_IdAndCreatedAtAfterOrderByCreatedAtDesc(
             Long userId,
             LocalDateTime weddingEnd
@@ -143,7 +142,7 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 12. שליפות לאיחוי — איחוד התראות מרובות (SystemRules)
+    // 🔵 12. שליפות לאיחוי — Aggregation בחלון זמן
     // ============================================================
 
     List<NotificationUser> findByUser_IdAndPopupSeenFalseAndCreatedAtBetween(
@@ -154,7 +153,7 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 13. ניקוי אוטומטי — AutoCleanup (SystemRules 9, 11)
+    // 🔵 13. ניקוי אוטומטי — AutoCleanup
     // ============================================================
 
     List<NotificationUser> findByCreatedAtBefore(LocalDateTime time);
@@ -163,8 +162,7 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 14. שאילתות לפי סטטוס “Locked” של משתמש בלי צילום
-    //     (התראות קריטיות בלבד בזמן נעילה — pinned או unread, בלי מחוקים/מוסתרים)
+    // 🔵 14. מצב Locked — משתמש בלי תמונה / נעול לפעולות מאגר
     // ============================================================
 
     @Query("""
@@ -180,10 +178,9 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 15. שאילתות מתקדמות לעתיד — AI / מודרטור
+    // 🔵 15. שאילתות מתקדמות — קטגוריה / AI / סיווג
     // ============================================================
 
-    // אם התראה מסומנת כ-"AI-danger" ב־Notification.category
     List<NotificationUser> findByNotification_CategoryAndUser_IdOrderByCreatedAtDesc(
             String category,
             Long userId
@@ -191,16 +188,14 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
 
 
     // ============================================================
-    // 🔵 16. התראות חשובות / High Priority + "Important Only"
+    // 🔵 16. התראות חשובות / High Priority + Important Only
     // ============================================================
 
-    // התראות בעדיפות גבוהה בלבד (למצב Locked / ערוץ קריטי)
     List<NotificationUser> findByUser_IdAndDeletedFalseAndHiddenFalseAndNotification_PriorityLevelGreaterThanEqualOrderByCreatedAtDesc(
             Long userId,
             int minPriority
     );
 
-    // "Important" — Pinned או Priority גבוה, למסך התראות חשובות בלבד
     @Query("""
            SELECT nu
            FROM NotificationUser nu
@@ -214,4 +209,29 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
             @Param("userId") Long userId,
             @Param("minPriority") int minPriority
     );
+
+
+    // ============================================================
+    // 🔵 17. עזר ל־Service — Batch / Unread Visible / Paging ראשוני
+    // ============================================================
+
+    // שליפה ב־Batch לפי רשימת IDs (לעדכון סטטוס מרוכז: read/hidden/deleted)
+    List<NotificationUser> findByIdIn(List<Long> ids);
+
+    // כמה התראות “חיות” ולא־נקראו (לא מחוק, לא מוסתר, לא נקרא)
+    long countByUser_IdAndDeletedFalseAndHiddenFalseAndReadFalse(Long userId);
+
+    // אוסף מצומצם של ההתראות האחרונות לצורך טעינה ראשונית יעילה (ללא paging מלא בצד DB)
+    List<NotificationUser> findTop50ByUser_IdAndDeletedFalseAndHiddenFalseOrderByCreatedAtDesc(Long userId);
+
+    // אוסף מצומצם של ההתראות הלא־נקראות האחרונות (למצב Popup ראשוני)
+    List<NotificationUser> findTop50ByUser_IdAndDeletedFalseAndHiddenFalseAndReadFalseOrderByCreatedAtDesc(Long userId);
+
+
+    // ============================================================
+    // 🔵 18. תור POPUP גלובלי — Worker/WebSocket
+    // ============================================================
+
+    // כל ההתראות שעדיין לא הוצגו כ־popup ושעדיין בתוקף (לא מחוק, לא מוסתר)
+    List<NotificationUser> findByPopupSeenFalseAndDeletedFalseAndHiddenFalse();
 }

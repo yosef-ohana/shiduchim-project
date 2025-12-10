@@ -193,4 +193,32 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
             SystemModule module,
             boolean success
     );
+
+
+    // ============================================================
+    // 🔵 15. Counters לפי משתמש — Auditing אישי
+    // ============================================================
+
+    long countByUserId(Long userId);
+
+    long countByUserIdAndSuccessFalse(Long userId);
+
+    long countByUserIdAndSeverity(Long userId, SystemSeverityLevel severity);
+
+
+    // ============================================================
+    // 🔵 16. SystemRules + TimeWindow — אנליזה לחוקים
+    // ============================================================
+
+    List<SystemLog> findBySystemRuleIdAndTimestampBetweenOrderByTimestampDesc(
+            Integer ruleId,
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
+    long countBySystemRuleIdAndTimestampBetween(
+            Integer ruleId,
+            LocalDateTime start,
+            LocalDateTime end
+    );
 }

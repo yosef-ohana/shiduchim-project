@@ -21,7 +21,6 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
 
     long countByReporterId(Long reporterId);
 
-
     // דירוג אמינות מדווח (Credibility Score)
     long countByReporterIdAndStatus(Long reporterId, ReportStatus status);
 
@@ -38,7 +37,6 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     List<UserReport> findByTargetIdOrderByCreatedAtDesc(Long targetId);
 
     long countByTargetId(Long targetId);
-
 
     // כמה דיווחים קיבל המשתמש בתקופה מסוימת (Escalation Rule)
     long countByTargetIdAndCreatedAtAfter(Long targetId, LocalDateTime since);
@@ -127,7 +125,7 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     // 🔵 9. אוטומציה / AI / Escalation
     // ============================================================
 
-    // תור טיפול — כל התיקים הפתוחים
+    // תור טיפול — כל התיקים הפתוחים (לפי רשימת סטטוסים)
     List<UserReport> findByStatusInOrderByCreatedAtAsc(List<ReportStatus> statuses);
 
     // לוגיקה של AI (קיבוץ אירועים)
@@ -178,4 +176,25 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
             LocalDateTime start,
             LocalDateTime end
     );
+
+
+    // ============================================================
+    // 🔵 14. פילטרים משולבים מתקדמים — Dashboard / AI / SystemRules
+    // ============================================================
+
+    // דיווחים לפי סטטוסים מרובים + טווח זמן (תור לפי עדיפות)
+    List<UserReport> findByStatusInAndCreatedAtBetweenOrderByCreatedAtAsc(
+            List<ReportStatus> statuses,
+            LocalDateTime start,
+            LocalDateTime end
+    );
+
+    // כל הדיווחים על Target לפי סטטוסים מרובים (היסטוריה מלאה)
+    List<UserReport> findByTargetIdAndStatusInOrderByCreatedAtDesc(
+            Long targetId,
+            List<ReportStatus> statuses
+    );
+
+    // ספירת תיקים פתוחים/בטיפול (לפי רשימת סטטוסים)
+    long countByStatusIn(List<ReportStatus> statuses);
 }

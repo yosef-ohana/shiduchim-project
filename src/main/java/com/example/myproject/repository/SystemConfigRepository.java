@@ -34,7 +34,7 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
 
 
     // ============================================================
-    // 🔵 3. טעינה לקבוצת סביבות (Warmup / Dashboard)
+    // 🔵 3. טעינת הגדרות בקבוצות (Warmup / Dashboard)
     // ============================================================
 
     List<SystemConfig> findByEnvironmentIn(List<String> environments);
@@ -113,6 +113,11 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
 
     Optional<SystemConfig> findTopByCategoryAndActiveTrueOrderByCreatedAtDesc(String category);
 
+    // 🆕 גלובל Active בלבד (environment = null)
+    List<SystemConfig> findByEnvironmentIsNullAndActiveTrueOrderByCreatedAtDesc();
+
+    Optional<SystemConfig> findTopByEnvironmentIsNullAndActiveTrueOrderByCreatedAtDesc();
+
 
     // ============================================================
     // 🔵 10. Effective Date — קונפיג עתידי / נכנס לתוקף (SystemRules §17)
@@ -123,6 +128,25 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
     List<SystemConfig> findByEffectiveAtAfter(LocalDateTime time);
 
     Optional<SystemConfig> findTopByConfigKeyAndEffectiveAtBeforeOrderByEffectiveAtDesc(
+            String configKey,
+            LocalDateTime now
+    );
+
+    // 🆕 Active + Effective (מה שבפועל בתוקף עכשיו לכל המערכת)
+    List<SystemConfig> findByActiveTrueAndEffectiveAtBefore(LocalDateTime time);
+
+    List<SystemConfig> findByEnvironmentAndActiveTrueAndEffectiveAtBefore(
+            String environment,
+            LocalDateTime time
+    );
+
+    Optional<SystemConfig> findTopByConfigKeyAndActiveTrueAndEffectiveAtBeforeOrderByEffectiveAtDesc(
+            String configKey,
+            LocalDateTime now
+    );
+
+    Optional<SystemConfig> findTopByEnvironmentAndConfigKeyAndActiveTrueAndEffectiveAtBeforeOrderByEffectiveAtDesc(
+            String environment,
             String configKey,
             LocalDateTime now
     );
@@ -152,6 +176,15 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
     List<SystemConfig> findByConfigKeyAndCategoryAndActiveTrueOrderByCreatedAtDesc(
             String configKey,
             String category
+    );
+
+    // 🆕 רשימת קונפיגים Active לפי קטגוריה (ללא סינון Environment)
+    List<SystemConfig> findByCategoryAndActiveTrueOrderByCreatedAtDesc(String category);
+
+    // 🆕 קונפיג Active אחרון לפי קטגוריה + Environment
+    Optional<SystemConfig> findTopByCategoryAndEnvironmentAndActiveTrueOrderByCreatedAtDesc(
+            String category,
+            String environment
     );
 
 

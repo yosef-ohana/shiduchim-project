@@ -17,21 +17,18 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
 
     List<LoginAttempt> findByEmailOrPhoneOrderByAttemptTimeDesc(String emailOrPhone);
 
-    // אחרון (לבדוק חסימה, OTP)
     Optional<LoginAttempt> findTopByEmailOrPhoneOrderByAttemptTimeDesc(String emailOrPhone);
 
 
     // ============================================================
-    // 🔵 2. שליפות לפי טווח זמן / אבטחה (Anti-Spam + Brute Force)
+    // 🔵 2. שליפות לפי טווח זמן / אבטחה
     // ============================================================
 
-    // נסיונות כושלים בזמן האחרון (שליטה על 3 כישלונות)
     List<LoginAttempt> findByEmailOrPhoneAndSuccessFalseAndAttemptTimeAfter(
             String emailOrPhone,
             LocalDateTime since
     );
 
-    // כל הנסיונות בזמן מסוים (לדוחות)
     List<LoginAttempt> findByAttemptTimeBetween(
             LocalDateTime start,
             LocalDateTime end
@@ -42,13 +39,10 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 3. חסימות זמניות (3 כישלונות)
     // ============================================================
 
-    // מי חסום עכשיו
     List<LoginAttempt> findByTemporaryBlockedTrue();
 
-    // שליפת ניסיון שנחסם זמנית עם blockedUntil
     List<LoginAttempt> findByEmailOrPhoneAndTemporaryBlockedTrue(String emailOrPhone);
 
-    // מי שעדיין חסום בזמן הנוכחי
     List<LoginAttempt> findByBlockedUntilAfter(LocalDateTime now);
 
 
@@ -65,10 +59,8 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 5. ניטור מתקפות (IP Monitoring)
     // ============================================================
 
-    // כל הנסיונות מ־IP מסוים
     List<LoginAttempt> findByIpAddressOrderByAttemptTimeDesc(String ip);
 
-    // ניסיונות כושלים מ־IP בזמן מוגבל (BRUTE FORCE)
     List<LoginAttempt> findByIpAddressAndSuccessFalseAndAttemptTimeAfter(
             String ip,
             LocalDateTime since
@@ -84,10 +76,11 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 6. סטטיסטיקות – Dashboard Admin
     // ============================================================
 
-    long countBySuccessFalse();   // כמה כישלונות מערכת-wide
-    long countBySuccessTrue();    // כמה הצלחות
+    long countBySuccessFalse();
 
-    long countByTemporaryBlockedTrue();  // כמה משתמשים בחסימה זמנית
+    long countBySuccessTrue();
+
+    long countByTemporaryBlockedTrue();
 
     long countByAttemptTimeBetween(LocalDateTime start, LocalDateTime end);
 
@@ -96,13 +89,11 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 7. התראות אבטחה (SystemRules §22)
     // ============================================================
 
-    // מי ניסה להתחבר X פעמים לאחרונה
     long countByEmailOrPhoneAndAttemptTimeAfter(
             String emailOrPhone,
             LocalDateTime since
     );
 
-    // מי נכשל 3 פעמים ברצף (משמש בבדיקה)
     long countByEmailOrPhoneAndSuccessFalse(String emailOrPhone);
 
 
@@ -110,10 +101,8 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 8. Clean-Up אוטומטי (לוגים ישנים)
     // ============================================================
 
-    // רשומות שפג תוקפן
     List<LoginAttempt> findByExpiresAtBefore(LocalDateTime now);
 
-    // רשומות ישנות לפי attemptTime
     List<LoginAttempt> findByAttemptTimeBefore(LocalDateTime threshold);
 
 
@@ -121,18 +110,60 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 9. שליפות מיוחדות לשירות האבטחה
     // ============================================================
 
-    // נסיון אחרון (ללא OTP, רק חסימה)
     Optional<LoginAttempt> findTopByEmailOrPhoneAndTemporaryBlockedFalseOrderByAttemptTimeDesc(
             String emailOrPhone
     );
 
-    // נסיון אחרון שהיה כישלון
     Optional<LoginAttempt> findTopByEmailOrPhoneAndSuccessFalseOrderByAttemptTimeDesc(
             String emailOrPhone
     );
 
-    // נסיון אחרון שהצליח
     Optional<LoginAttempt> findTopByEmailOrPhoneAndSuccessTrueOrderByAttemptTimeDesc(
             String emailOrPhone
+    );
+
+
+    // ============================================================
+    // 🔵 10. תוספות חדשות – איתור מתקפות חכמות
+    // ============================================================
+
+    // 🆕 ניסיון לפי אימייל + IP (לזהות השתלטות חיצונית)
+    List<LoginAttempt> findByEmailOrPhoneAndIpAddressOrderByAttemptTimeDesc(
+            String emailOrPhone,
+            String ipAddress
+    );
+
+    // 🆕 כל הנסיונות לפי deviceId (מכשיר מסוים)
+    List<LoginAttempt> findByDeviceIdOrderByAttemptTimeDesc(String deviceId);
+
+    // 🆕 כמות ניסיונות כושלים ממכשיר מסוים בזמן קצר
+    long countByDeviceIdAndSuccessFalseAndAttemptTimeAfter(
+            String deviceId,
+            LocalDateTime since
+    );
+
+    // 🆕 ניסיון אחרון ממכשיר מסוים
+    Optional<LoginAttempt> findTopByDeviceIdOrderByAttemptTimeDesc(String deviceId);
+
+    // 🆕 כמה מכשירים שונים ניסו להתחבר לאותו חשבון
+    long countDistinctByEmailOrPhoneAndDeviceIdIsNotNull(String emailOrPhone);
+
+
+    // ============================================================
+    // 🔵 11. אנליזה מתקדמת — Risk Engine (תשתית)
+    // ============================================================
+
+    // 🆕 כמות ניסיונות במכשיר *וב־IP* כקרוס־קורלציה (BRUTE + BOT)
+    long countByIpAddressAndDeviceIdAndSuccessFalseAndAttemptTimeAfter(
+            String ipAddress,
+            String deviceId,
+            LocalDateTime since
+    );
+
+    // 🆕 כמות ניסיונות עם userAgent חדש (מכשיר חדש / לקוח חשוד)
+    long countByEmailOrPhoneAndUserAgentAndAttemptTimeAfter(
+            String emailOrPhone,
+            String userAgent,
+            LocalDateTime since
     );
 }
