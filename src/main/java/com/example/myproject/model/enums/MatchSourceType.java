@@ -1,14 +1,12 @@
 package com.example.myproject.model.enums;
 
-/**
- * מקור יצירת ההתאמה.
- * תואם למסמך 1–2–3 ולכל חוקי MatchService.
- */
 public enum MatchSourceType {
 
-    UNKNOWN,   // לא הוגדר / לא מצליחים לזהות
-    WEDDING,   // נוצר בחתונה
-    GLOBAL,    // נוצר במאגר הכללי
-    ADMIN,     // מנהל יצר התאמה
-    AI         // התאמה שנוצרה ע"י מערכת AI
+    UNKNOWN,        // ברירת מחדל
+    WEDDING,        // התאמה בחופה/חתונה
+    GLOBAL,         // התאמה דרך המאגר הגלובלי
+    LIVE_WEDDING,   // התאמה בזמן לייב (זמן אמת)
+    ADMIN,          // התאמה שנוצרה ע"י מנהל
+    AI,             // התאמה שנוצרה ע"י מנוע חכם
+    LIKE_ACTION     // התאמה בעקבות לייק של משתמש
 }
