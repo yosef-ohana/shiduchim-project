@@ -8,6 +8,10 @@ import com.example.myproject.repository.MatchRepository;
 import com.example.myproject.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.myproject.dto.MatchActionFeedback;
+import com.example.myproject.model.enums.SystemActionType;
+import com.example.myproject.model.enums.SystemModule;
+import com.example.myproject.model.enums.WeddingMode;
 
 import java.time.LocalDateTime;
 import java.util.Comparator;
@@ -1226,5 +1230,243 @@ public class MatchService {
         // double score = aiEngine.calculateScore(match.getUser1(), match.getUser2());
         // match.setMatchScore(score);
         // matchRepository.save(match);
+    }
+
+    // ============================================================
+// 🔵 UI Feedback Wrappers — מחזירים MatchActionFeedback ל-Frontend
+// ============================================================
+
+    public MatchActionFeedback freezeMatchWithFeedback(Long matchId,
+                                                       Long actorUserId,
+                                                       String reason,
+                                                       WeddingMode mode,
+                                                       SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = freezeMatch(matchId, actorUserId, reason);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_FROZEN,
+                mode,
+                sourceModule,
+                beforeStatus,
+                reason,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback unfreezeMatchWithFeedback(Long matchId,
+                                                         Long actorUserId,
+                                                         WeddingMode mode,
+                                                         SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = unfreezeMatch(matchId, actorUserId);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_UNFROZEN,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback blockMatchWithFeedback(Long matchId,
+                                                      Long actorUserId,
+                                                      String reason,
+                                                      WeddingMode mode,
+                                                      SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = blockMatch(matchId, actorUserId, reason);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_BLOCKED,
+                mode,
+                sourceModule,
+                beforeStatus,
+                reason,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback unblockMatchWithFeedback(Long matchId,
+                                                        Long actorUserId,
+                                                        WeddingMode mode,
+                                                        SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = unblockMatch(matchId, actorUserId);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_UNBLOCKED,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback approveMatchWithFeedback(Long matchId,
+                                                        Long actorUserId,
+                                                        WeddingMode mode,
+                                                        SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        MatchApprovalResult res = approveMatchForUser(matchId, actorUserId);
+        Match updated = res.getMatch();
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        SystemActionType action = becameMutualNow
+                ? SystemActionType.MATCH_MUTUAL_CONFIRMED
+                : SystemActionType.MATCH_UPDATED;
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                action,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback unapproveMatchWithFeedback(Long matchId,
+                                                          Long actorUserId,
+                                                          WeddingMode mode,
+                                                          SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        MatchApprovalResult res = unapproveMatchForUser(matchId, actorUserId);
+        Match updated = res.getMatch();
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        // אצלך אין SystemActionType ל-"UNAPPROVE" לכן MATCH_UPDATED
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_UPDATED,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback archiveMatchWithFeedback(Long matchId,
+                                                        Long actorUserId,
+                                                        WeddingMode mode,
+                                                        SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = archiveMatch(matchId);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_ARCHIVED,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
+    }
+
+    public MatchActionFeedback unarchiveMatchWithFeedback(Long matchId,
+                                                          Long actorUserId,
+                                                          WeddingMode mode,
+                                                          SystemModule sourceModule) {
+
+        Match matchBefore = getById(matchId);
+        MatchStatus beforeStatus = matchBefore.getStatus();
+        boolean beforeMutual = matchBefore.isMutualApproved();
+
+        Match updated = unarchiveMatch(matchId);
+
+        boolean afterMutual = updated.isMutualApproved();
+        boolean becameMutualNow = (!beforeMutual && afterMutual);
+        boolean mutualBrokenNow = (beforeMutual && !afterMutual);
+
+        // אצלך אין Action ייעודי ל-UNARCHIVE -> MATCH_UPDATED
+        return MatchActionFeedback.build(
+                updated,
+                actorUserId,
+                SystemActionType.MATCH_UPDATED,
+                mode,
+                sourceModule,
+                beforeStatus,
+                null,
+                becameMutualNow,
+                mutualBrokenNow
+        );
     }
 }

@@ -7,7 +7,9 @@ import jakarta.persistence.*;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 @Entity
 @Table(name = "weddings")
@@ -39,6 +41,34 @@ public class Wedding {
     // 🛑 האם האירוע נסגר ידנית? (מומלץ)
     @Column(name = "manually_closed", nullable = false)
     private boolean manuallyClosed = false;
+
+    // =====================================================
+    // 🔵 תוספות אפיון/Repo: Public + CandidatePool + Token + Cancel/Audit
+    // =====================================================
+
+    @Column(name = "is_public", nullable = false)
+    private boolean isPublic = false; // כדי ש-findByIsPublicTrue/False יעבוד
+
+    @Column(name = "allow_candidate_pool", nullable = false)
+    private boolean allowCandidatePool = false; // כדי ש-findByAllowCandidatePoolTrue יעבוד
+
+    @Column(name = "wedding_token", unique = true, length = 80)
+    private String weddingToken; // טוקן פנימי לקישור/אבטחה (בנפרד מ-accessCode)
+
+    @Column(name = "active_background_id")
+    private Long activeBackgroundId; // מצביע לרקע פעיל ב-WeddingBackground
+
+    @Column(name = "updated_by_user_id")
+    private Long updatedByUserId; // updatedBy לפי האפיון
+
+    @Column(name = "cancelled", nullable = false)
+    private boolean cancelled = false;
+
+    @Column(name = "cancelled_at")
+    private LocalDateTime cancelledAt;
+
+    @Column(name = "cancel_reason", length = 500)
+    private String cancelReason;
 
     // =====================================================
     // 🔵 זמן ומיקום
@@ -87,6 +117,19 @@ public class Wedding {
     private Long createdByUserId;
 
     // =====================================================
+    // 🔵 Co-Owners (בעלי אירוע מרובים) — לפי האפיון
+    // =====================================================
+
+    @ManyToMany
+    @JoinTable(
+            name = "wedding_co_owners",
+            joinColumns = @JoinColumn(name = "wedding_id"),
+            inverseJoinColumns = @JoinColumn(name = "user_id")
+    )
+    @JsonIgnore
+    private List<User> coOwners = new ArrayList<>();
+
+    // =====================================================
     // 🔵 קישור למשתתפים
     // =====================================================
 
@@ -110,7 +153,7 @@ public class Wedding {
 
     @Enumerated(EnumType.STRING)
     @Column(name = "background_mode", nullable = false, length = 20)
-    private BackgroundMode backgroundMode = BackgroundMode.DEFAULT;   // IMAGE / VIDEO / DEFAULT
+    private BackgroundMode backgroundMode = BackgroundMode.DEFAULT;   // IMAGE / VIDEO / DEFAULT / (אצלך יש גם GLOBAL/WEDDING)
 
     @Column(name = "background_image_url")
     private String backgroundImageUrl;
@@ -123,7 +166,7 @@ public class Wedding {
     private String notes;
 
     // =====================================================
-    // 🔵 Hooks של JPA – טיפול תאריכים, endTime וסנכרון ownerUserId
+    // 🔵 Hooks של JPA – טיפול תאריכים, endTime וסנכרון ownerUserId + token
     // =====================================================
 
     @PrePersist
@@ -148,6 +191,11 @@ public class Wedding {
         if (backgroundMode == null) {
             backgroundMode = BackgroundMode.DEFAULT;
         }
+
+        // יצירת weddingToken אם לא הוגדר
+        if (weddingToken == null || weddingToken.isBlank()) {
+            weddingToken = UUID.randomUUID().toString();
+        }
     }
 
     @PreUpdate
@@ -161,6 +209,15 @@ public class Wedding {
 
         if (backgroundMode == null) {
             backgroundMode = BackgroundMode.DEFAULT;
+        }
+
+        // הגנה נוספת אם בטעות נשאר null
+        if (weddingToken == null || weddingToken.isBlank()) {
+            weddingToken = UUID.randomUUID().toString();
+        }
+
+        if (cancelled && cancelledAt == null) {
+            cancelledAt = updatedAt;
         }
     }
 
@@ -188,6 +245,7 @@ public class Wedding {
         this.active = true;
         this.createdAt = LocalDateTime.now();
         this.backgroundMode = BackgroundMode.DEFAULT;
+        this.weddingToken = UUID.randomUUID().toString();
     }
 
     // =====================================================
@@ -293,6 +351,13 @@ public class Wedding {
         this.createdByUserId = createdByUserId;
     }
 
+    public List<User> getCoOwners() {
+        return coOwners;
+    }
+    public void setCoOwners(List<User> coOwners) {
+        this.coOwners = coOwners;
+    }
+
     public List<User> getParticipants() {
         return participants;
     }
@@ -331,7 +396,6 @@ public class Wedding {
     public String getAccessCode() {
         return accessCode;
     }
-
     public void setAccessCode(String accessCode) {
         this.accessCode = accessCode;
     }
@@ -339,19 +403,73 @@ public class Wedding {
     public boolean isManuallyClosed() {
         return manuallyClosed;
     }
-
     public void setManuallyClosed(boolean manuallyClosed) {
         this.manuallyClosed = manuallyClosed;
+    }
+
+    public boolean isPublic() {
+        return isPublic;
+    }
+    public void setPublic(boolean aPublic) {
+        isPublic = aPublic;
+    }
+
+    public boolean isAllowCandidatePool() {
+        return allowCandidatePool;
+    }
+    public void setAllowCandidatePool(boolean allowCandidatePool) {
+        this.allowCandidatePool = allowCandidatePool;
+    }
+
+    public String getWeddingToken() {
+        return weddingToken;
+    }
+    public void setWeddingToken(String weddingToken) {
+        this.weddingToken = weddingToken;
+    }
+
+    public Long getActiveBackgroundId() {
+        return activeBackgroundId;
+    }
+    public void setActiveBackgroundId(Long activeBackgroundId) {
+        this.activeBackgroundId = activeBackgroundId;
+    }
+
+    public Long getUpdatedByUserId() {
+        return updatedByUserId;
+    }
+    public void setUpdatedByUserId(Long updatedByUserId) {
+        this.updatedByUserId = updatedByUserId;
+    }
+
+    public boolean isCancelled() {
+        return cancelled;
+    }
+    public void setCancelled(boolean cancelled) {
+        this.cancelled = cancelled;
+        if (cancelled && this.cancelledAt == null) {
+            this.cancelledAt = LocalDateTime.now();
+        }
+    }
+
+    public LocalDateTime getCancelledAt() {
+        return cancelledAt;
+    }
+    public void setCancelledAt(LocalDateTime cancelledAt) {
+        this.cancelledAt = cancelledAt;
+    }
+
+    public String getCancelReason() {
+        return cancelReason;
+    }
+    public void setCancelReason(String cancelReason) {
+        this.cancelReason = cancelReason;
     }
 
     // =====================================================
     // 🔵 מתודות עזר
     // =====================================================
 
-    /**
-     * מחזיר את ה-URL האפקטיבי לרקע (תמונה / וידאו) לפי backgroundMode.
-     * אם שניהם null – ה-Frontend יציג רקע ברירת מחדל.
-     */
     @Transient
     public String getEffectiveBackgroundUrl() {
         if (backgroundMode == BackgroundMode.VIDEO && backgroundVideoUrl != null) {
@@ -360,21 +478,15 @@ public class Wedding {
         if (backgroundMode == BackgroundMode.IMAGE && backgroundImageUrl != null) {
             return backgroundImageUrl;
         }
-        return null; // DEFAULT → רקע ברירת מחדל בצד לקוח
+        return null;
     }
 
-    /**
-     * בדיקה אם החתונה כבר הסתיימה בזמן נתון (לשימוש ב־WeddingService/SystemRules).
-     */
     @Transient
     public boolean isFinished(LocalDateTime now) {
         if (weddingEndTime == null) return false;
         return now.isAfter(weddingEndTime);
     }
 
-    /**
-     * בדיקה אם החתונה "חיה" כרגע (בין התחלה לסיום).
-     */
     @Transient
     public boolean isLive(LocalDateTime now) {
         if (weddingDate == null || weddingEndTime == null) return false;

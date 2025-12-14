@@ -186,4 +186,8 @@ public interface WeddingRepository extends JpaRepository<Wedding, Long> {
             LocalDateTime now1,
             LocalDateTime now2
     );
+
+    Optional<Wedding> findByWeddingToken(String weddingToken);
+    boolean existsByAccessCode(String accessCode);
+    boolean existsByWeddingToken(String weddingToken);
 }
