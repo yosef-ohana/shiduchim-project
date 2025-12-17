@@ -4,21 +4,30 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "notification_users",
+@Table(
+        name = "notification_users",
+        uniqueConstraints = {
+                // ✅ לא חובה, אבל מומלץ מאוד למנוע כפילויות:
+                // אותה Notification לאותו User פעם אחת בלבד.
+                @UniqueConstraint(name = "uk_nu_user_notification", columnNames = {"user_id", "notification_id"})
+        },
         indexes = {
                 @Index(name = "idx_nu_user", columnList = "user_id"),
                 @Index(name = "idx_nu_notification", columnList = "notification_id"),
-                @Index(name = "idx_nu_read", columnList = "is_read")
-        })
+                @Index(name = "idx_nu_read", columnList = "is_read"),
+
+                @Index(name = "idx_nu_created_at", columnList = "created_at"),
+                @Index(name = "idx_nu_popup_seen", columnList = "popup_seen"),
+                @Index(name = "idx_nu_deleted", columnList = "is_deleted"),
+                @Index(name = "idx_nu_hidden", columnList = "hidden"),
+                @Index(name = "idx_nu_delivered", columnList = "delivered")
+        }
+)
 public class NotificationUser {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    // =========================================
-    // 🔵 קשרים
-    // =========================================
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "notification_id", nullable = false)
@@ -27,10 +36,6 @@ public class NotificationUser {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
-
-    // =========================================
-    // 🔵 סטטוסים אישיים
-    // =========================================
 
     @Column(name = "is_read", nullable = false)
     private boolean read = false;
@@ -53,9 +58,11 @@ public class NotificationUser {
     @Column(name = "hidden", nullable = false)
     private boolean hidden = false;
 
-    // =========================================
-    // 🔵 זמנים
-    // =========================================
+    @Column(name = "delivered")
+    private Boolean delivered; // null-safe
+
+    @Column(name = "delivered_at")
+    private LocalDateTime deliveredAt;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
@@ -65,20 +72,17 @@ public class NotificationUser {
 
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null)
-            createdAt = LocalDateTime.now();
+        if (createdAt == null) createdAt = LocalDateTime.now();
+        if (delivered == null) delivered = false;
     }
 
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
-        if (read && readAt == null)
-            readAt = LocalDateTime.now();
-    }
 
-    // =========================================
-    // 🔵 בנאים
-    // =========================================
+        if (read && readAt == null) readAt = LocalDateTime.now();
+        if (Boolean.TRUE.equals(delivered) && deliveredAt == null) deliveredAt = LocalDateTime.now();
+    }
 
     public NotificationUser() {}
 
@@ -86,11 +90,8 @@ public class NotificationUser {
         this.notification = notification;
         this.user = user;
         this.createdAt = LocalDateTime.now();
+        if (this.delivered == null) this.delivered = false;
     }
-
-    // =========================================
-    // 🔵 Getters & Setters
-    // =========================================
 
     public Long getId() { return id; }
 
@@ -103,8 +104,7 @@ public class NotificationUser {
     public boolean isRead() { return read; }
     public void setRead(boolean read) {
         this.read = read;
-        if (read && readAt == null)
-            readAt = LocalDateTime.now();
+        if (read && readAt == null) readAt = LocalDateTime.now();
     }
 
     public LocalDateTime getReadAt() { return readAt; }
@@ -124,6 +124,15 @@ public class NotificationUser {
 
     public boolean isHidden() { return hidden; }
     public void setHidden(boolean hidden) { this.hidden = hidden; }
+
+    public Boolean getDelivered() { return delivered; }
+    public void setDelivered(Boolean delivered) {
+        this.delivered = delivered;
+        if (Boolean.TRUE.equals(delivered) && deliveredAt == null) deliveredAt = LocalDateTime.now();
+    }
+
+    public LocalDateTime getDeliveredAt() { return deliveredAt; }
+    public void setDeliveredAt(LocalDateTime deliveredAt) { this.deliveredAt = deliveredAt; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

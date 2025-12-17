@@ -5,27 +5,30 @@ import jakarta.persistence.*;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "notifications",
+@Table(
+        name = "notifications",
         indexes = {
                 @Index(name = "idx_notification_type", columnList = "type"),
-                @Index(name = "idx_notification_created_at", columnList = "created_at")
-        })
+                @Index(name = "idx_notification_created_at", columnList = "created_at"),
+
+                @Index(name = "idx_notification_related_user_id", columnList = "related_user_id"),
+                @Index(name = "idx_notification_wedding_id", columnList = "wedding_id"),
+                @Index(name = "idx_notification_match_id", columnList = "match_id"),
+                @Index(name = "idx_notification_chat_message_id", columnList = "chat_message_id"),
+                @Index(name = "idx_notification_category", columnList = "category"),
+                @Index(name = "idx_notification_source", columnList = "source")
+        }
+)
 public class Notification {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    // =========================================
-    // 🔵 סוג ההתראה (Enum חובה)
-    // =========================================
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
-    private NotificationType type;       // MATCH_MUTUAL, MESSAGE_RECEIVED, PROFILE_APPROVED וכו'
+    private NotificationType type;
 
-    // =========================================
-    // 🔵 לתמיכה בהצגת התראה גלובלית אחידה
-    // =========================================
     @Column(nullable = false, length = 200)
     private String title;
 
@@ -33,13 +36,10 @@ public class Notification {
     private String message;
 
     @Column(columnDefinition = "TEXT")
-    private String metadata;              // JSON: {"photoUrl": "...", "preview": "..."}
+    private String metadata;
 
-    // =========================================
-    // 🔵 קשרים ישירים (ללא טעינת אובייקט מלא)
-    // =========================================
     @Column(name = "related_user_id")
-    private Long relatedUserId;          // מי שלח הודעה / לייק / וכו’
+    private Long relatedUserId;
 
     @Column(name = "wedding_id")
     private Long weddingId;
@@ -50,24 +50,15 @@ public class Notification {
     @Column(name = "chat_message_id")
     private Long chatMessageId;
 
-    // =========================================
-    // 🔵 מקור ההתראה / קטגוריה
-    // =========================================
     @Column(length = 50)
-    private String category;             // match / chat / system / ai / wedding / profile
+    private String category;
 
     @Column(length = 50)
-    private String source;               // system / admin / ai / wedding-owner
+    private String source;
 
-    // =========================================
-    // 🔵 עדיפות
-    // =========================================
     @Column(nullable = false)
-    private int priorityLevel = 1;       // 1 רגיל, 2 חשוב, 3 דחוף
+    private int priorityLevel = 1;
 
-    // =========================================
-    // 🔵 תאריכים
-    // =========================================
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
@@ -76,8 +67,7 @@ public class Notification {
 
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null)
-            createdAt = LocalDateTime.now();
+        if (createdAt == null) createdAt = LocalDateTime.now();
     }
 
     @PreUpdate
@@ -85,9 +75,6 @@ public class Notification {
         updatedAt = LocalDateTime.now();
     }
 
-    // =========================================
-    // 🔵 בנאים
-    // =========================================
     public Notification() {}
 
     public Notification(NotificationType type,
@@ -115,10 +102,6 @@ public class Notification {
         this.priorityLevel = priorityLevel;
         this.createdAt = LocalDateTime.now();
     }
-
-    // =========================================
-    // 🔵 Getters & Setters
-    // =========================================
 
     public Long getId() { return id; }
 
