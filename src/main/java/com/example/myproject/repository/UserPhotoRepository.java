@@ -1,8 +1,12 @@
 package com.example.myproject.repository;
 
 import com.example.myproject.model.UserPhoto;
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.*;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -12,31 +16,35 @@ import java.util.Optional;
 public interface UserPhotoRepository extends JpaRepository<UserPhoto, Long> {
 
     // ============================================================
-    // 🔵 1. תמונות לפי משתמש
+    // 1) בסיסי לפי משתמש
     // ============================================================
 
     List<UserPhoto> findByUser_Id(Long userId);
 
-    List<UserPhoto> findByUser_IdOrderByPositionIndexAsc(Long userId);
+    List<UserPhoto> findByUser_IdOrderByPositionIndexAscIdAsc(Long userId);
 
-    List<UserPhoto> findByUser_IdAndDeletedFalseOrderByPositionIndexAsc(Long userId);
+    List<UserPhoto> findByUser_IdAndDeletedFalseOrderByPositionIndexAscIdAsc(Long userId);
 
-    List<UserPhoto> findByUser_IdAndDeletedTrueOrderByDeletedAtDesc(Long userId);
+    Page<UserPhoto> findByUser_IdAndDeletedFalse(Long userId, Pageable pageable);
 
+    List<UserPhoto> findByUser_IdAndDeletedTrueOrderByDeletedAtDescIdDesc(Long userId);
+
+    Optional<UserPhoto> findByIdAndUser_Id(Long photoId, Long userId);
+
+    Optional<UserPhoto> findByIdAndUser_IdAndDeletedFalse(Long photoId, Long userId);
 
     // ============================================================
-    // 🔵 2. תמונה ראשית / תמונת Main
+    // 2) Primary / Main
     // ============================================================
 
-    Optional<UserPhoto> findByUser_IdAndPrimaryPhotoTrueAndDeletedFalse(Long userId);
-
-    List<UserPhoto> findByUser_IdAndPrimaryPhotoTrue(Long userId);
+    Optional<UserPhoto> findFirstByUser_IdAndDeletedFalseAndPrimaryPhotoTrue(Long userId);
 
     List<UserPhoto> findByUser_IdAndMainTrueAndDeletedFalse(Long userId);
 
+    boolean existsByUser_IdAndDeletedFalseAndPrimaryPhotoTrue(Long userId);
 
     // ============================================================
-    // 🔵 3. ספירות וסטטוסים
+    // 3) ספירות
     // ============================================================
 
     long countByUser_Id(Long userId);
@@ -45,41 +53,45 @@ public interface UserPhotoRepository extends JpaRepository<UserPhoto, Long> {
 
     long countByUser_IdAndDeletedTrue(Long userId);
 
-    boolean existsByUser_IdAndPrimaryPhotoTrue(Long userId);
-
     boolean existsByUser_IdAndDeletedFalse(Long userId);
 
-
     // ============================================================
-    // 🔵 4. סדר / מיקום / גלריה
-    // ============================================================
-
-    Optional<UserPhoto> findByUser_IdAndPositionIndex(Long userId, Integer positionIndex);
-
-    List<UserPhoto> findByUser_IdAndDeletedFalseOrderByCreatedAtAsc(Long userId);
-
-
-    // ============================================================
-    // 🔵 5. תמונות מחוקות לוגית / שחזור
+    // 4) סדר / מיקום
     // ============================================================
 
-    List<UserPhoto> findByDeletedTrueOrderByDeletedAtDesc();
+    @Query("select max(p.positionIndex) from UserPhoto p where p.user.id = :userId")
+    Integer findMaxPositionIndexByUserId(@Param("userId") Long userId);
 
-    List<UserPhoto> findByDeletedTrueAndUser_Id(Long userId);
+    @Modifying
+    @Transactional
+    @Query("update UserPhoto p set p.positionIndex = :positionIndex where p.id = :photoId")
+    int updatePosition(@Param("photoId") Long photoId, @Param("positionIndex") int positionIndex);
 
+    @Modifying
+    @Transactional
+    @Query("update UserPhoto p set p.primaryPhoto = false, p.main = false where p.user.id = :userId")
+    int clearPrimaryForUser(@Param("userId") Long userId);
 
     // ============================================================
-    // 🔵 6. תמונות לא ראויות
+    // 5) FileType / FileSize (מותאם לסרביס + deleted=false)
+    // ============================================================
+
+    List<UserPhoto> findByUser_IdAndDeletedFalseAndFileTypeIgnoreCaseOrderByPositionIndexAscIdAsc(Long userId, String fileType);
+
+    List<UserPhoto> findByUser_IdAndDeletedFalseAndFileSizeBytesGreaterThanOrderByPositionIndexAscIdAsc(Long userId, long minBytes);
+
+    List<UserPhoto> findByUser_IdAndDeletedFalseAndFileSizeBytesLessThanOrderByPositionIndexAscIdAsc(Long userId, long maxBytes);
+
+    // ============================================================
+    // 6) "לא ראויה" (metadataJson text search) — Admin/Owner
     // ============================================================
 
     List<UserPhoto> findByMetadataJsonContainingIgnoreCase(String flagText);
 
-    // תמונות שסומנו כ"לא ראויה" בעזרת Flag (metadata, או fileType מסוים)
     List<UserPhoto> findByUser_IdAndMetadataJsonContainingIgnoreCase(Long userId, String flagText);
 
-
     // ============================================================
-    // 🔵 7. העלאה ע"י אדמין / חסימת העלאות
+    // 7) העלאה ע"י אדמין
     // ============================================================
 
     List<UserPhoto> findByUploadedByAdminTrueAndUser_Id(Long userId);
@@ -88,45 +100,36 @@ public interface UserPhotoRepository extends JpaRepository<UserPhoto, Long> {
 
     List<UserPhoto> findByUploadedByAdminTrue();
 
-
     // ============================================================
-    // 🔵 8. תמונות לפי file type / size / validation
-    // ============================================================
-
-    List<UserPhoto> findByUser_IdAndFileType(String fileType);
-
-    List<UserPhoto> findByUser_IdAndFileSizeBytesGreaterThan(Long size);
-
-    List<UserPhoto> findByUser_IdAndFileSizeBytesLessThan(Long size);
-
-
-    // ============================================================
-    // 🔵 9. תמונות לפי תאריכים (Admin / Owner)
-    // ============================================================
-
-    List<UserPhoto> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
-
-    List<UserPhoto> findByDeletedAtBetween(LocalDateTime start, LocalDateTime end);
-
-
-    // ============================================================
-    // 🔵 10. אופטימיזציה למנגנון "בחירת ראשית"
-    // ============================================================
-
-    List<UserPhoto> findByUser_IdAndDeletedFalseOrderByIdAsc(Long userId);
-
-
-    // ============================================================
-    // 🔵 11. תמונות נעולות אחרי חתונה
+    // 8) נעילה אחרי חתונה
     // ============================================================
 
     List<UserPhoto> findByUser_IdAndLockedAfterWeddingTrue(Long userId);
 
     List<UserPhoto> findByLockedAfterWeddingTrue();
 
+    @Modifying
+    @Transactional
+    @Query("update UserPhoto p set p.lockedAfterWedding = true where p.user.id = :userId and p.deleted = false")
+    int lockAllActiveAfterWedding(@Param("userId") Long userId);
+
+    @Modifying
+    @Transactional
+    @Query("update UserPhoto p set p.lockedAfterWedding = false where p.user.id = :userId")
+    int unlockAllByAdmin(@Param("userId") Long userId);
 
     // ============================================================
-    // 🔵 12. תמונות כלל מערכת (Admin)
+    // 9) תאריכים / Cleanup
+    // ============================================================
+
+    List<UserPhoto> findByCreatedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    List<UserPhoto> findByDeletedAtBetween(LocalDateTime start, LocalDateTime end);
+
+    List<UserPhoto> findByDeletedTrueAndDeletedAtBefore(LocalDateTime deleteBefore);
+
+    // ============================================================
+    // 10) כלל מערכת (Admin)
     // ============================================================
 
     List<UserPhoto> findByDeletedFalseOrderByCreatedAtDesc();
@@ -136,14 +139,4 @@ public interface UserPhotoRepository extends JpaRepository<UserPhoto, Long> {
     List<UserPhoto> findByDeletedTrue();
 
     Optional<UserPhoto> findByIdAndDeletedFalse(Long photoId);
-
-    Optional<UserPhoto> findByIdAndUser_Id(Long photoId, Long userId);
-
-
-    // ============================================================
-    // 🔵 13. Cleanup — מחיקה פיזית
-    // ============================================================
-
-    List<UserPhoto> findByDeletedTrueAndDeletedAtBefore(LocalDateTime deleteBefore);
-
 }
