@@ -30,9 +30,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
             LocalDateTime end
     );
 
-
     // ============================================================
-    // 🔵 2. לפי Action Type (LOGIN / LIKE / MATCH / GLOBAL / RULE_FAIL...)
+    // 🔵 2. לפי Action Type
     // ============================================================
 
     List<SystemLog> findByActionTypeOrderByTimestampDesc(SystemActionType type);
@@ -44,9 +43,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
 
     long countByActionType(SystemActionType type);
 
-
     // ============================================================
-    // 🔵 3. לפי Module (USER / WEDDING / MATCH / CHAT / SYSTEM_CONFIG ...)
+    // 🔵 3. לפי Module
     // ============================================================
 
     List<SystemLog> findByModuleOrderByTimestampDesc(SystemModule module);
@@ -58,9 +56,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
 
     long countByModule(SystemModule module);
 
-
     // ============================================================
-    // 🔵 4. לפי Severity (INFO / WARNING / ERROR / CRITICAL)
+    // 🔵 4. לפי Severity
     // ============================================================
 
     List<SystemLog> findBySeverityOrderByTimestampDesc(SystemSeverityLevel severity);
@@ -73,18 +70,16 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
 
     long countBySeverity(SystemSeverityLevel severity);
 
-
     // ============================================================
-    // 🔵 5. לפי הצלחה / כישלון של פעולה
+    // 🔵 5. לפי הצלחה / כישלון
     // ============================================================
 
     List<SystemLog> findBySuccessOrderByTimestampDesc(boolean success);
 
     List<SystemLog> findByUserIdAndSuccessOrderByTimestampDesc(Long userId, boolean success);
 
-
     // ============================================================
-    // 🔵 6. ישות קשורה (User / Wedding / Match / Photo / Report ...)
+    // 🔵 6. ישות קשורה
     // ============================================================
 
     List<SystemLog> findByRelatedEntityTypeAndRelatedEntityIdOrderByTimestampDesc(
@@ -98,9 +93,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
             Long relatedEntityId
     );
 
-
     // ============================================================
-    // 🔵 7. חוקים של SystemRules (1–41)
+    // 🔵 7. חוקים (SystemRules)
     // ============================================================
 
     List<SystemLog> findBySystemRuleIdOrderByTimestampDesc(Integer ruleId);
@@ -108,7 +102,6 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
     List<SystemLog> findByUserIdAndSystemRuleIdOrderByTimestampDesc(Long userId, Integer ruleId);
 
     long countBySystemRuleId(Integer ruleId);
-
 
     // ============================================================
     // 🔵 8. Debug / Trace – לפי Request Id
@@ -118,27 +111,24 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
 
     List<SystemLog> findByUserIdAndRequestIdOrderByTimestampDesc(Long userId, String requestId);
 
-
     // ============================================================
-    // 🔵 9. חיפוש לפי IP / DeviceInfo (אבטחה)
+    // 🔵 9. אבטחה – IP / DeviceInfo
     // ============================================================
 
     List<SystemLog> findByIpAddressOrderByTimestampDesc(String ipAddress);
 
     List<SystemLog> findByDeviceInfoContainingIgnoreCaseOrderByTimestampDesc(String text);
 
-
     // ============================================================
-    // 🔵 10. חיפוש טקסט חופשי (details / contextJson)
+    // 🔵 10. חיפוש טקסט חופשי
     // ============================================================
 
     List<SystemLog> findByDetailsContainingIgnoreCase(String text);
 
     List<SystemLog> findByContextJsonContainingIgnoreCase(String text);
 
-
     // ============================================================
-    // 🔵 11. שליפות Bulk עבור Dashboard Admin
+    // 🔵 11. Dashboard Counters
     // ============================================================
 
     long countByTimestampBetween(LocalDateTime start, LocalDateTime end);
@@ -155,25 +145,25 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
             LocalDateTime end
     );
 
-
     // ============================================================
-    // 🔵 12. ניקוי לוגים (Cleanup Jobs)
+    // 🔵 12. ניקוי לוגים (Cleanup)
     // ============================================================
 
     List<SystemLog> findByTimestampBefore(LocalDateTime time);
 
+    // ✅ חשוב לסרביס שלך (purgeOlderThan) — מחיקה ישירה ב-DB
+    long deleteByTimestampBefore(LocalDateTime time);
 
     // ============================================================
-    // 🔵 13. לוגים שנוצרו אוטומטית (CRON, AI, System)
+    // 🔵 13. Automated vs Manual
     // ============================================================
 
     List<SystemLog> findByAutomatedTrueOrderByTimestampDesc();
 
     List<SystemLog> findByAutomatedFalseOrderByTimestampDesc();
 
-
     // ============================================================
-    // 🔵 14. פילטרים משולבים — Advanced
+    // 🔵 14. פילטרים משולבים
     // ============================================================
 
     List<SystemLog> findByModuleAndActionTypeAndSeverityOrderByTimestampDesc(
@@ -194,9 +184,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
             boolean success
     );
 
-
     // ============================================================
-    // 🔵 15. Counters לפי משתמש — Auditing אישי
+    // 🔵 15. Counters לפי משתמש
     // ============================================================
 
     long countByUserId(Long userId);
@@ -205,9 +194,8 @@ public interface SystemLogRepository extends JpaRepository<SystemLog, Long> {
 
     long countByUserIdAndSeverity(Long userId, SystemSeverityLevel severity);
 
-
     // ============================================================
-    // 🔵 16. SystemRules + TimeWindow — אנליזה לחוקים
+    // 🔵 16. Rule + TimeWindow
     // ============================================================
 
     List<SystemLog> findBySystemRuleIdAndTimestampBetweenOrderByTimestampDesc(

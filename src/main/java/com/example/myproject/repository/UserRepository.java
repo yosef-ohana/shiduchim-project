@@ -220,4 +220,16 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByLastSeenBefore(LocalDateTime cutoff);
     List<User> findByLastSeenBetween(LocalDateTime start, LocalDateTime end);
+
+    // ============================================================
+// 🔵 14. Heartbeat (ability 40)
+// ============================================================
+
+// ❌ היה:
+// List<User> findByLastSeenBefore(LocalDateTime cutoff);
+// List<User> findByLastSeenBetween(LocalDateTime start, LocalDateTime end);
+
+    // ✅ מתוקן לפי ה-Entity שלך:
+    List<User> findByUpdatedAtBefore(LocalDateTime cutoff);
+    List<User> findByUpdatedAtBetween(LocalDateTime start, LocalDateTime end);
 }

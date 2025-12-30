@@ -89,19 +89,20 @@ public class SystemRulesService {
 
         GlobalAccessState state;
 
-        if (!requested && !approved && !inPool) {
-            state = GlobalAccessState.NONE;
+        // ✅ מצב תקין: אושר + נמצא במאגר
+        if (approved && inPool) {
+            state = GlobalAccessState.APPROVED;
+
+            // ✅ אם יש חותמת דחייה — זה REJECTED (גם אם keepRequestFlag=true)
+        } else if (user.getGlobalRejectedAt() != null && !approved && !inPool) {
+            state = GlobalAccessState.REJECTED;
+
+            // ✅ בקשה ממתינה
         } else if (requested && !approved && !inPool) {
             state = GlobalAccessState.REQUESTED;
-        } else if (approved && inPool) {
-            state = GlobalAccessState.APPROVED;
-        } else if (!approved && requested && !inPool) {
-            // rejected + request נשאר – למשל keepRequestFlag=true
-            state = GlobalAccessState.REJECTED;
-        } else if (!approved && !requested && !inPool) {
-            state = GlobalAccessState.NONE;
+
+            // ✅ כל היתר
         } else {
-            // כל מצב מעורבב אחר – נבחר NONE כדי לא "לשקר" למצב
             state = GlobalAccessState.NONE;
         }
 

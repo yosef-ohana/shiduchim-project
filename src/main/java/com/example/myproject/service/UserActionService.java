@@ -1,449 +1,738 @@
 package com.example.myproject.service;
 
-import com.example.myproject.model.*;
+import com.example.myproject.model.User;
+import com.example.myproject.model.UserAction;
+import com.example.myproject.model.enums.SystemActionType;
+import com.example.myproject.model.enums.SystemModule;
+import com.example.myproject.model.enums.SystemSeverityLevel;
+import com.example.myproject.model.enums.UserActionCategory;
+import com.example.myproject.model.enums.UserActionType;
 import com.example.myproject.repository.UserActionRepository;
 import com.example.myproject.repository.UserRepository;
+import com.example.myproject.service.System.SystemLogService;
+import com.example.myproject.service.System.SystemSettingsService;
+import com.example.myproject.service.User.UserStateEvaluatorService;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.List;
+import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Service
 @Transactional
 public class UserActionService {
 
-    private final UserActionRepository userActionRepository;
-    private final UserRepository userRepository;
-    private final MatchService matchService;
-    private final NotificationService notificationService;
-
     // =====================================================
-    // 🔵 Constructor
+    // ✅ Settings keys (SystemSettings)
     // =====================================================
 
-    public UserActionService(UserActionRepository userActionRepository,
-                             UserRepository userRepository,
-                             MatchService matchService,
-                             NotificationService notificationService) {
-        this.userActionRepository = userActionRepository;
-        this.userRepository = userRepository;
-        this.matchService = matchService;
-        this.notificationService = notificationService;
+    private static final String K_AUDIT_ENABLED = "userAction.audit.enabled";
+
+    private static final String K_RATE_MIN_SECONDS = "userAction.rate.minSeconds";                 // default 2
+    private static final String K_RATE_MIN_SECONDS_HEAVY = "userAction.rate.minSeconds.heavy";     // default 5
+    private static final String K_RATE_WINDOW_DUP_SECONDS = "userAction.rate.dupWindowSeconds";    // default 10
+
+    private static final String K_PURGE_DAYS_ACTIVE = "userAction.purge.days.active";              // default 365
+    private static final String K_PURGE_DAYS_INACTIVE = "userAction.purge.days.inactive";          // default 90
+
+    private static final String K_HEAVY_ACTION_TYPES = "userAction.rate.heavyActionTypes";         // CSV
+
+    // Anti-spam monitor (signal בלבד)
+    private static final String K_MONITOR_ENABLED = "userAction.monitor.enabled";                  // default true
+    private static final String K_MONITOR_WINDOW_SECONDS = "userAction.monitor.windowSeconds";     // default 180
+    private static final String K_MONITOR_THRESHOLD = "userAction.monitor.threshold";              // default 30
+
+    // ✅ System actor
+    private static final String K_SYSTEM_ACTOR_USER_ID = "userAction.systemActorUserId";           // required
+
+    // ✅ Safety max page size
+    private static final String K_MAX_PAGE_SIZE = "userAction.query.maxPageSize";                  // default 200
+
+    // =====================================================
+    // ✅ Dependencies
+    // =====================================================
+
+    private final UserActionRepository repo;
+    private final UserRepository userRepo;
+    private final SystemSettingsService settings;
+    private final SystemLogService systemLogService;
+    private final UserStateEvaluatorService userStateEvaluator;
+
+    // ActionGroupId generator
+    private final long nodeSalt = ThreadLocalRandom.current().nextLong(100_000L, 999_999L);
+    private final AtomicInteger groupSeq = new AtomicInteger(0);
+
+    public UserActionService(UserActionRepository repo,
+                             UserRepository userRepo,
+                             SystemSettingsService settings,
+                             SystemLogService systemLogService,
+                             UserStateEvaluatorService userStateEvaluator) {
+        this.repo = repo;
+        this.userRepo = userRepo;
+        this.settings = settings;
+        this.systemLogService = systemLogService;
+        this.userStateEvaluator = userStateEvaluator;
     }
 
     // =====================================================
-    // 1️⃣ עזר: טעינת משתמשים
+    // ✅ Command DTO
     // =====================================================
 
-    private User loadUserOrThrow(Long userId, String messagePrefix) {
-        if (userId == null) {
-            throw new IllegalArgumentException(messagePrefix + " - userId is null");
+    public static class CreateActionCommand {
+        public Long actorUserId;
+        public Long targetUserId;
+
+        public UserActionType actionType;
+        public UserActionCategory category;
+
+        public Long weddingId;
+        public Long originWeddingId;
+        public Long matchId;
+        public Long actionGroupId;
+
+        public String source;            // user/admin/system/ai
+        public boolean autoGenerated;    // system/ai
+        public boolean active = true;
+
+        public String listName;
+        public String metadata;
+        public String reason;
+
+        public String ipAddress;
+        public String deviceInfo;
+
+        public boolean enforceRateLimit = true;
+        public boolean enforceCooldownSameType = true;
+        public boolean preventDuplicates = true;
+        public boolean requireCanLike = false;
+        public boolean requireCanSendMessage = false;
+
+        // Audit (optional)
+        public SystemActionType auditActionType;
+        public SystemModule auditModule;
+        public SystemSeverityLevel auditSeverity = SystemSeverityLevel.INFO;
+        public boolean auditAutomated = false;
+        public String auditRequestId;
+        public String auditContextJson;
+    }
+
+    public static class BatchResult {
+        private final int requested;
+        private final int created;
+        private final int skippedAsDuplicate;
+        private final int blockedByRateOrState;
+
+        public BatchResult(int requested, int created, int skippedAsDuplicate, int blockedByRateOrState) {
+            this.requested = requested;
+            this.created = created;
+            this.skippedAsDuplicate = skippedAsDuplicate;
+            this.blockedByRateOrState = blockedByRateOrState;
         }
-        return userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalArgumentException(messagePrefix + userId));
+
+        public int getRequested() { return requested; }
+        public int getCreated() { return created; }
+        public int getSkippedAsDuplicate() { return skippedAsDuplicate; }
+        public int getBlockedByRateOrState() { return blockedByRateOrState; }
     }
 
     // =====================================================
-    // 2️⃣ מתודת ליבה: יצירת UserAction אחת
+    // ✅ Core API
     // =====================================================
 
-    /**
-     * מתודה פנימית שמייצרת UserAction ושומרת אותו.
-     * משמשת את כל שאר הפעולות (LIKE/DISLIKE/FREEZE/VIEW וכו').
-     */
-    private UserAction recordActionInternal(Long actorId,
-                                            Long targetUserId,
-                                            Long weddingId,
-                                            Long originWeddingId,
-                                            Long matchId,
-                                            UserActionType actionType,
-                                            UserActionCategory categoryOverride,
-                                            String metadata,
-                                            String source,
-                                            boolean autoGenerated,
-                                            String listName,
-                                            Long actionGroupId) {
+    public UserAction record(CreateActionCommand cmd) {
+        Objects.requireNonNull(cmd, "cmd is null");
+        validateCmd(cmd);
 
-        User actor = loadUserOrThrow(actorId, "Actor not found: ");
+        User actor = getUserOrThrow(cmd.actorUserId);
+        User target = (cmd.targetUserId == null) ? null : getUserOrThrow(cmd.targetUserId);
 
-        User target = null;
-        if (targetUserId != null) {
-            target = loadUserOrThrow(targetUserId, "Target not found: ");
+        // Gate לפי UserStateEvaluator
+        enforceUserState(cmd, actor);
+
+        // Rate-limit / cooldown
+        if (cmd.enforceRateLimit) enforceRateLimitAnyAction(cmd.actorUserId, cmd.actionType);
+        if (cmd.enforceCooldownSameType) enforceCooldownSameType(cmd.actorUserId, cmd.actionType);
+
+        // Idempotency (dup window + context)
+        if (cmd.preventDuplicates) {
+            UserAction dup = findRecentDuplicate(cmd);
+            if (dup != null) {
+                auditIfNeeded(cmd, actor.getId(), "SKIP_DUPLICATE userActionId=" + dup.getId());
+                return dup;
+            }
         }
 
-        UserAction action = new UserAction();
-        action.setActor(actor);
-        action.setTarget(target);
-        action.setActionType(actionType);
+        Long groupId = (cmd.actionGroupId != null) ? cmd.actionGroupId : nextGroupIdIfMissing(cmd);
 
-        // אם לא מגיע override – נבחר קטגוריה לפי טיפוס
-        UserActionCategory category = (categoryOverride != null)
-                ? categoryOverride
-                : UserActionCategory.SOCIAL;
+        UserAction ua = new UserAction(
+                actor,
+                target,
+                cmd.actionType,
+                cmd.category,
+                cmd.weddingId,
+                cmd.originWeddingId,
+                cmd.matchId,
+                groupId,
+                safeTrim(cmd.source),
+                cmd.autoGenerated,
+                cmd.metadata,
+                cmd.listName
+        );
+        ua.setActive(cmd.active);
+        ua.setReason(safeTrim(cmd.reason));
+        ua.setIpAddress(safeTrim(cmd.ipAddress));
+        ua.setDeviceInfo(safeTrim(cmd.deviceInfo));
 
-        action.setCategory(category);
-        action.setWeddingId(weddingId);
-        action.setOriginWeddingId(originWeddingId);
-        action.setMatchId(matchId);
-        action.setActionGroupId(actionGroupId);
-        action.setSource(source != null ? source : "user");
-        action.setAutoGenerated(autoGenerated);
-        action.setMetadata(metadata);
-        action.setListName(listName);
-        action.setActive(true);
-        action.setCreatedAt(LocalDateTime.now());
-        action.setUpdatedAt(LocalDateTime.now());
+        UserAction saved = repo.save(ua);
 
-        return userActionRepository.save(action);
+        monitorSuspiciousIfEnabled(actor.getId());
+        auditIfNeeded(cmd, actor.getId(), "CREATED userActionId=" + saved.getId());
+
+        return saved;
     }
 
-    /**
-     * מתודה גנרית PUBLIC – לשימוש מצד קונטרולרים / שירותים אחרים.
-     * זהה ל־recordActionInternal אבל חשופה החוצה.
-     */
+    public BatchResult recordBatch(List<CreateActionCommand> commands) {
+        if (commands == null || commands.isEmpty()) return new BatchResult(0, 0, 0, 0);
+
+        Set<Long> ids = new HashSet<>();
+        for (CreateActionCommand c : commands) {
+            if (c == null) continue;
+            if (c.actorUserId != null) ids.add(c.actorUserId);
+            if (c.targetUserId != null) ids.add(c.targetUserId);
+        }
+
+        Map<Long, User> users = userRepo.findAllById(ids).stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a));
+
+        int created = 0;
+        int dup = 0;
+        int blocked = 0;
+
+        for (CreateActionCommand cmd : commands) {
+            if (cmd == null) continue;
+            try {
+                validateCmd(cmd);
+
+                if (cmd.preventDuplicates && findRecentDuplicate(cmd) != null) {
+                    dup++;
+                    continue;
+                }
+
+                User actor = users.get(cmd.actorUserId);
+                User target = (cmd.targetUserId == null) ? null : users.get(cmd.targetUserId);
+
+                if (actor == null) throw new IllegalArgumentException("User not found: " + cmd.actorUserId);
+                if (cmd.targetUserId != null && target == null) throw new IllegalArgumentException("User not found: " + cmd.targetUserId);
+
+                enforceUserState(cmd, actor);
+
+                if (cmd.enforceRateLimit) enforceRateLimitAnyAction(cmd.actorUserId, cmd.actionType);
+                if (cmd.enforceCooldownSameType) enforceCooldownSameType(cmd.actorUserId, cmd.actionType);
+
+                Long groupId = (cmd.actionGroupId != null) ? cmd.actionGroupId : nextGroupIdIfMissing(cmd);
+
+                UserAction ua = new UserAction(
+                        actor,
+                        target,
+                        cmd.actionType,
+                        cmd.category,
+                        cmd.weddingId,
+                        cmd.originWeddingId,
+                        cmd.matchId,
+                        groupId,
+                        safeTrim(cmd.source),
+                        cmd.autoGenerated,
+                        cmd.metadata,
+                        cmd.listName
+                );
+                ua.setActive(cmd.active);
+                ua.setReason(safeTrim(cmd.reason));
+                ua.setIpAddress(safeTrim(cmd.ipAddress));
+                ua.setDeviceInfo(safeTrim(cmd.deviceInfo));
+
+                repo.save(ua);
+                created++;
+
+            } catch (RuntimeException ex) {
+                blocked++;
+            }
+        }
+
+        Long firstActor = commands.stream()
+                .filter(Objects::nonNull)
+                .map(c -> c.actorUserId)
+                .filter(Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+
+        if (firstActor != null) {
+            try { monitorSuspiciousIfEnabled(firstActor); } catch (Exception ignore) {}
+        }
+
+        return new BatchResult(commands.size(), created, dup, blocked);
+    }
+
+    // =====================================================
+    // ✅ Convenience wrappers
+    // =====================================================
+
     public UserAction recordUserAction(Long actorId,
-                                       Long targetUserId,
-                                       Long weddingId,
-                                       Long originWeddingId,
-                                       Long matchId,
-                                       UserActionType actionType,
+                                       Long targetId,
+                                       UserActionType type,
                                        UserActionCategory category,
-                                       String metadata,
-                                       String source,
-                                       boolean autoGenerated,
+                                       Long weddingId,
+                                       Long matchId,
                                        String listName,
-                                       Long actionGroupId) {
+                                       String metadata,
+                                       String ip,
+                                       String deviceInfo) {
 
-        return recordActionInternal(
-                actorId,
-                targetUserId,
-                weddingId,
-                originWeddingId,
-                matchId,
-                actionType,
-                category,
-                metadata,
-                source,
-                autoGenerated,
-                listName,
-                actionGroupId
+        CreateActionCommand cmd = new CreateActionCommand();
+        cmd.actorUserId = actorId;
+        cmd.targetUserId = targetId;
+        cmd.actionType = type;
+        cmd.category = category;
+        cmd.weddingId = weddingId;
+        cmd.matchId = matchId;
+        cmd.listName = listName;
+        cmd.metadata = metadata;
+        cmd.ipAddress = ip;
+        cmd.deviceInfo = deviceInfo;
+        cmd.source = "user";
+        cmd.autoGenerated = false;
+
+        return record(cmd);
+    }
+
+    public UserAction recordSystemAction(Long actorIdNullable,
+                                         Long targetIdNullable,
+                                         UserActionType type,
+                                         UserActionCategory category,
+                                         Long weddingId,
+                                         Long matchId,
+                                         Long actionGroupId,
+                                         String metadata,
+                                         String reason) {
+
+        CreateActionCommand cmd = new CreateActionCommand();
+        cmd.actorUserId = (actorIdNullable != null) ? actorIdNullable : requireSystemActorUserId();
+        cmd.targetUserId = targetIdNullable;
+        cmd.actionType = type;
+        cmd.category = category;
+        cmd.weddingId = weddingId;
+        cmd.matchId = matchId;
+        cmd.actionGroupId = actionGroupId;
+        cmd.metadata = metadata;
+        cmd.reason = reason;
+        cmd.source = "system";
+        cmd.autoGenerated = true;
+
+        cmd.enforceRateLimit = false;
+        cmd.enforceCooldownSameType = false;
+        cmd.preventDuplicates = false;
+
+        return record(cmd);
+    }
+
+    // =====================================================
+    // ✅ Read APIs
+    // =====================================================
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByActor(Long actorId, boolean activeOnly, int limit) {
+        if (actorId == null) return Collections.emptyList();
+        Pageable p = page(limit);
+        return activeOnly
+                ? repo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p)
+                : repo.findByActor_IdOrderByCreatedAtDesc(actorId, p);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByTarget(Long targetId, boolean activeOnly, int limit) {
+        if (targetId == null) return Collections.emptyList();
+        Pageable p = page(limit);
+        return activeOnly
+                ? repo.findByTarget_IdAndActiveTrueOrderByCreatedAtDesc(targetId, p)
+                : repo.findByTarget_IdOrderByCreatedAtDesc(targetId, p);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByActorAndType(Long actorId, UserActionType type, boolean activeOnly, int limit) {
+        if (actorId == null || type == null) return Collections.emptyList();
+        Pageable p = page(limit);
+
+        List<UserAction> rows = activeOnly
+                ? repo.findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(actorId, type)
+                : repo.findByActor_IdAndActionTypeOrderByCreatedAtDesc(actorId, type, p);
+
+        return activeOnly ? limit(rows, limit) : rows;
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByActorAndCategory(Long actorId, UserActionCategory category, boolean activeOnly, int limit) {
+        if (actorId == null || category == null) return Collections.emptyList();
+        Pageable p = page(limit);
+        return activeOnly
+                ? repo.findByActor_IdAndCategoryAndActiveTrueOrderByCreatedAtDesc(actorId, category, p)
+                : repo.findByActor_IdAndCategoryOrderByCreatedAtDesc(actorId, category, p);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByWedding(Long weddingId, int limit) {
+        if (weddingId == null) return Collections.emptyList();
+        return repo.findByWeddingIdOrderByCreatedAtDesc(weddingId, page(limit));
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByOriginWedding(Long originWeddingId, int limit) {
+        if (originWeddingId == null) return Collections.emptyList();
+        return repo.findByOriginWeddingIdOrderByCreatedAtDesc(originWeddingId, page(limit));
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByMatch(Long matchId, int limit) {
+        if (matchId == null) return Collections.emptyList();
+        return repo.findByMatchIdOrderByCreatedAtDesc(matchId, page(limit));
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getByGroup(Long actionGroupId, int limit) {
+        if (actionGroupId == null) return Collections.emptyList();
+        List<UserAction> rows = repo.findByActionGroupId(actionGroupId);
+        rows = sortByCreatedDesc(rows);
+        return limit(rows, limit);
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> getRecentForActor(Long actorId, Duration window, int limit) {
+        if (actorId == null || window == null) return Collections.emptyList();
+        LocalDateTime since = LocalDateTime.now().minusSeconds(Math.max(1, window.getSeconds()));
+        return repo.findByActor_IdAndCreatedAtAfter(actorId, since, page(limit));
+    }
+
+    @Transactional(readOnly = true)
+    public List<UserAction> searchByMetadata(String text, int limit) {
+        if (text == null || text.isBlank()) return Collections.emptyList();
+        List<UserAction> rows = repo.findByMetadataContainingIgnoreCase(text.trim());
+        return limit(rows, limit);
+    }
+
+    // =====================================================
+    // ✅ Mutations / Purge
+    // =====================================================
+
+    public UserAction deactivate(Long actionId, String reason) {
+        UserAction ua = repo.findById(actionId)
+                .orElseThrow(() -> new IllegalArgumentException("UserAction not found: " + actionId));
+        ua.setActive(false);
+        if (reason != null && !reason.isBlank()) ua.setReason(reason.trim());
+        ua.setUpdatedAt(LocalDateTime.now());
+        return repo.save(ua);
+    }
+
+    public UserAction reactivate(Long actionId, String reason) {
+        UserAction ua = repo.findById(actionId)
+                .orElseThrow(() -> new IllegalArgumentException("UserAction not found: " + actionId));
+        ua.setActive(true);
+        if (reason != null && !reason.isBlank()) ua.setReason(reason.trim());
+        ua.setUpdatedAt(LocalDateTime.now());
+        return repo.save(ua);
+    }
+
+    public long purgeOld() {
+        int daysActive = getIntSetting(K_PURGE_DAYS_ACTIVE, 365);
+        int daysInactive = getIntSetting(K_PURGE_DAYS_INACTIVE, 90);
+
+        LocalDateTime cutoffActive = LocalDateTime.now().minusDays(daysActive);
+        LocalDateTime cutoffInactive = LocalDateTime.now().minusDays(daysInactive);
+
+        long deleted = 0;
+        deleted += repo.deleteByCreatedAtBeforeAndActiveFalse(cutoffInactive);
+        deleted += repo.deleteByCreatedAtBefore(cutoffActive);
+        return deleted;
+    }
+
+    // =====================================================
+    // ✅ Stats
+    // =====================================================
+
+    @Transactional(readOnly = true)
+    public long countByActor(Long actorId) {
+        if (actorId == null) return 0;
+        return repo.countByActor_Id(actorId);
+    }
+
+    @Transactional(readOnly = true)
+    public long countByType(UserActionType type) {
+        if (type == null) return 0;
+        return repo.countByActionType(type);
+    }
+
+    @Transactional(readOnly = true)
+    public long countByCategory(UserActionCategory category) {
+        if (category == null) return 0;
+        return repo.countByCategory(category);
+    }
+
+    @Transactional(readOnly = true)
+    public long countByWedding(Long weddingId) {
+        if (weddingId == null) return 0;
+        return repo.countByWeddingId(weddingId);
+    }
+
+    @Transactional(readOnly = true)
+    public long countByActorAndWedding(Long actorId, Long weddingId) {
+        if (actorId == null || weddingId == null) return 0;
+        return repo.countByActor_IdAndWeddingId(actorId, weddingId);
+    }
+
+    // =====================================================
+    // 🔒 Rate Limit / Cooldown / Duplicate detection
+    // =====================================================
+
+    private void enforceRateLimitAnyAction(Long actorId, UserActionType type) {
+        int minSeconds = getIntSetting(K_RATE_MIN_SECONDS, 2);
+        int minSecondsHeavy = getIntSetting(K_RATE_MIN_SECONDS_HEAVY, 5);
+
+        boolean heavy = isHeavy(type);
+        LocalDateTime since = LocalDateTime.now().minusSeconds(heavy ? minSecondsHeavy : minSeconds);
+
+        if (repo.existsByActor_IdAndCreatedAtAfter(actorId, since)) {
+            throw new IllegalStateException("Rate limit: actorId=" + actorId);
+        }
+    }
+
+    private void enforceCooldownSameType(Long actorId, UserActionType type) {
+        if (type == null) return;
+        int minSeconds = getIntSetting(K_RATE_MIN_SECONDS, 2);
+        LocalDateTime since = LocalDateTime.now().minusSeconds(minSeconds);
+
+        if (repo.existsByActor_IdAndActionTypeAndCreatedAtAfter(actorId, type, since)) {
+            throw new IllegalStateException("Cooldown: actorId=" + actorId + " type=" + type);
+        }
+    }
+
+    private UserAction findRecentDuplicate(CreateActionCommand cmd) {
+        if (cmd.targetUserId == null) return null;
+
+        int win = getIntSetting(K_RATE_WINDOW_DUP_SECONDS, 10);
+        LocalDateTime since = LocalDateTime.now().minusSeconds(win);
+
+        List<UserAction> rows = repo.findRecentDuplicateWithContext(
+                cmd.actorUserId,
+                cmd.targetUserId,
+                cmd.actionType,
+                cmd.category,
+                since,
+                cmd.weddingId,
+                cmd.originWeddingId,
+                cmd.matchId,
+                PageRequest.of(0, 1)
         );
+
+        return (rows == null || rows.isEmpty()) ? null : rows.get(0);
     }
 
-    // =====================================================================
-    // 3️⃣ שליפות בסיסיות מ־UserActionRepository
-    // =====================================================================
+    private boolean isHeavy(UserActionType type) {
+        if (type == null) return false;
 
-    @Transactional(readOnly = true)
-    public List<UserAction> getActionsByActor(Long actorId) {
-        return userActionRepository.findByActorId(actorId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActiveActionsByActor(Long actorId) {
-        return userActionRepository.findByActorIdAndActiveTrue(actorId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActionsByTarget(Long targetId) {
-        return userActionRepository.findByTargetId(targetId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActiveActionsByTarget(Long targetId) {
-        return userActionRepository.findByTargetIdAndActiveTrue(targetId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActionsByType(UserActionType type) {
-        return userActionRepository.findByActionType(type);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActionsByWedding(Long weddingId) {
-        return userActionRepository.findByWeddingId(weddingId);
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getActionsByMatch(Long matchId) {
-        return userActionRepository.findByMatchId(matchId);
-    }
-
-    // =====================================================================
-    // 4️⃣ פעולות משתמש: LIKE / DISLIKE / FREEZE / UNFREEZE / VIEW
-    // =====================================================================
-
-    /**
-     * לייק למשתמש אחר.
-     * - יוצר פעולה מסוג LIKE
-     * - מעדכן listName = "LIKE"
-     * - מכבה דיסלייק/קפוא קודמים
-     */
-    public UserAction likeUser(Long actorId, Long targetUserId, Long weddingId) {
-
-        if (actorId == null || targetUserId == null)
-            throw new IllegalArgumentException("actorId and targetUserId are required");
-
-        if (actorId.equals(targetUserId))
-            throw new IllegalArgumentException("Cannot like yourself.");
-
-        // תיעוד הפעולה
-        UserAction action = recordActionInternal(
-                actorId,
-                targetUserId,
-                weddingId,
-                weddingId,                    // originWeddingId
-                null,                         // matchId
-                UserActionType.LIKE,
-                UserActionCategory.SOCIAL,
+        String raw = settings.getEffectiveStringOrDefault(
+                settings.resolveEnv(),
+                SystemSettingsService.Scope.SYSTEM,
                 null,
-                "user",
-                false,
-                "LIKE",
+                K_HEAVY_ACTION_TYPES,
                 null
         );
 
-        // כיבוי פעולות שליליות קודמות
-        deactivatePreviousActions(actorId, targetUserId, UserActionType.DISLIKE);
-        deactivatePreviousActions(actorId, targetUserId, UserActionType.FREEZE);
+        if (raw == null || raw.isBlank()) return false;
 
-        return action;
+        Set<String> heavySet = Arrays.stream(raw.split("[,;\\s]+"))
+                .filter(s -> s != null && !s.isBlank())
+                .map(String::trim)
+                .map(String::toUpperCase)
+                .collect(Collectors.toSet());
+
+        return heavySet.contains(type.name().toUpperCase());
     }
 
-    /**
-     * דיסלייק — מבטל לייק קיים + מסמן כ"לא מעוניין".
-     * - listName = "DISLIKE"
-     * - מכבה LIKE קודמים
-     * - שולח התראה USER_DISLIKED לצד השני
-     */
-    public UserAction dislikeUser(Long actorId, Long targetUserId, Long weddingId) {
+    // =====================================================
+    // 🧠 Anti-spam monitor (Signal בלבד)
+    // =====================================================
 
-        UserAction action = recordActionInternal(
-                actorId,
-                targetUserId,
-                weddingId,
-                weddingId,
+    private void monitorSuspiciousIfEnabled(Long actorId) {
+        boolean enabled = getBooleanSetting(K_MONITOR_ENABLED, true);
+        if (!enabled) return;
+
+        int windowSeconds = getIntSetting(K_MONITOR_WINDOW_SECONDS, 180);
+        int threshold = getIntSetting(K_MONITOR_THRESHOLD, 30);
+
+        LocalDateTime since = LocalDateTime.now().minusSeconds(Math.max(10, windowSeconds));
+        List<UserAction> recent = repo.findByActor_IdAndCreatedAtAfter(actorId, since);
+
+        if (recent != null && recent.size() >= threshold) {
+            try {
+                systemLogService.logTrace(
+                        SystemActionType.SECURITY_SUSPICIOUS_MATCH_ACTIVITY, // ✅ קיים אצלך
+                        SystemModule.USER_ACTION_SERVICE,                    // ✅ קיים אצלך
+                        SystemSeverityLevel.WARNING,                         // ✅ קיים אצלך
+                        true,
+                        actorId,
+                        null,
+                        null,
+                        null,
+                        "UserAction monitor threshold hit: actorId=" + actorId + " count=" + recent.size() + " windowSeconds=" + windowSeconds,
+                        null,
+                        true
+                );
+            } catch (Exception ignore) {}
+        }
+    }
+
+    // =====================================================
+    // 🧾 Audit (optional)
+    // =====================================================
+
+    private void auditIfNeeded(CreateActionCommand cmd, Long actorUserId, String details) {
+        boolean enabled = getBooleanSetting(K_AUDIT_ENABLED, true);
+        if (!enabled) return;
+        if (cmd.auditActionType == null || cmd.auditModule == null) return;
+
+        try {
+            systemLogService.logTrace(
+                    cmd.auditActionType,
+                    cmd.auditModule,
+                    (cmd.auditSeverity != null ? cmd.auditSeverity : SystemSeverityLevel.INFO),
+                    true,
+                    actorUserId,
+                    safeTrim(cmd.auditRequestId),
+                    safeTrim(cmd.ipAddress),
+                    safeTrim(cmd.deviceInfo),
+                    details,
+                    safeTrim(cmd.auditContextJson),
+                    cmd.auditAutomated
+            );
+        } catch (Exception ignore) {}
+    }
+
+    // =====================================================
+    // 🔧 Gate / Validation / Helpers
+    // =====================================================
+
+    private void enforceUserState(CreateActionCommand cmd, User actor) {
+        if (!(cmd.requireCanLike || cmd.requireCanSendMessage)) return;
+
+        UserStateEvaluatorService.UserStateSummary st = userStateEvaluator.evaluateUserState(actor);
+
+        if (cmd.requireCanLike && !st.isCanLike()) {
+            throw new IllegalStateException("User cannot like: " + String.join(" | ", st.getReasonsBlocked()));
+        }
+        if (cmd.requireCanSendMessage && !st.isCanSendMessage()) {
+            throw new IllegalStateException("User cannot send message: " + String.join(" | ", st.getReasonsBlocked()));
+        }
+    }
+
+    private void validateCmd(CreateActionCommand cmd) {
+        if (cmd.actorUserId == null) throw new IllegalArgumentException("actorUserId is null");
+        if (cmd.actionType == null) throw new IllegalArgumentException("actionType is null");
+        if (cmd.category == null) throw new IllegalArgumentException("category is null");
+    }
+
+    private User getUserOrThrow(Long id) {
+        return userRepo.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+    }
+
+    private Long nextGroupIdIfMissing(CreateActionCommand cmd) {
+        boolean need =
+                cmd.matchId != null ||
+                        (cmd.listName != null && !cmd.listName.isBlank()) ||
+                        (cmd.metadata != null && cmd.metadata.length() > 30);
+
+        if (!need) return null;
+
+        long micros = System.currentTimeMillis() * 1_000L;
+        int seq = Math.floorMod(groupSeq.incrementAndGet(), 1000);
+        return (micros * 1_000L) + (nodeSalt % 1_000L) * 1000L + seq;
+    }
+
+    private Long requireSystemActorUserId() {
+        // ✅ אין getEffectiveLongOrDefault אצלך -> מביאים String ומפרסרים
+        String raw = settings.getEffectiveStringOrDefault(
+                settings.resolveEnv(),
+                SystemSettingsService.Scope.SYSTEM,
                 null,
-                UserActionType.DISLIKE,
-                UserActionCategory.SOCIAL,
-                null,
-                "user",
-                false,
-                "DISLIKE",
+                K_SYSTEM_ACTOR_USER_ID,
                 null
         );
 
-        // כיבוי LIKE פעיל
-        deactivatePreviousActions(actorId, targetUserId, UserActionType.LIKE);
+        if (raw == null || raw.isBlank()) {
+            throw new IllegalStateException("System actor is required. Set SystemSettings key: " + K_SYSTEM_ACTOR_USER_ID);
+        }
 
-        // שליחת התראה (לפי האפיון)
-        notificationService.notifyUserDisliked(targetUserId, actorId);
-
-        return action;
+        try {
+            return Long.parseLong(raw.trim());
+        } catch (NumberFormatException e) {
+            throw new IllegalStateException("Invalid systemActorUserId in SystemSettings: " + raw);
+        }
     }
 
-    /**
-     * הקפאת משתמש — כניסה לרשימת "מקפיא".
-     * - listName = "FREEZE"
-     * - מכבה כל FREEZE קודמים
-     * - שולח התראה USER_FROZEN
-     */
-    public UserAction freezeUser(Long actorId, Long targetUserId, Long weddingId) {
-
-        UserAction freeze = recordActionInternal(
-                actorId,
-                targetUserId,
-                weddingId,
-                weddingId,
+    private int getIntSetting(String key, int def) {
+        // אם יש אצלך getEffectiveInt — אפשר להחזיר אליו.
+        // אבל כדי להיות 100% תואם: נביא String ונפרסר.
+        String raw = settings.getEffectiveStringOrDefault(
+                settings.resolveEnv(),
+                SystemSettingsService.Scope.SYSTEM,
                 null,
-                UserActionType.FREEZE,
-                UserActionCategory.SOCIAL,
-                null,
-                "user",
-                false,
-                "FREEZE",
-                null
+                key,
+                String.valueOf(def)
         );
 
-        // כיבוי FREEZE קודמים
-        deactivatePreviousActions(actorId, targetUserId, UserActionType.FREEZE, freeze.getId());
-
-        // התראה
-        notificationService.notifyUserFreezeApplied(targetUserId, actorId);
-
-        return freeze;
+        try {
+            return Integer.parseInt(raw.trim());
+        } catch (Exception ignore) {
+            return def;
+        }
     }
 
-    /**
-     * ביטול קפיאה — UNFREEZE
-     * - מסיר כל FREEZE פעילים
-     * - listName = "UNFREEZE" (רק היסטוריה)
-     * - שולח התראה USER_UNFROZEN
-     */
-    public UserAction unfreezeUser(Long actorId, Long targetUserId) {
-
-        // כיבוי FREEZE פעיל
-        deactivatePreviousActions(actorId, targetUserId, UserActionType.FREEZE);
-
-        // תיעוד UNFREEZE
-        UserAction action = recordActionInternal(
-                actorId,
-                targetUserId,
+    private boolean getBooleanSetting(String key, boolean def) {
+        String raw = settings.getEffectiveStringOrDefault(
+                settings.resolveEnv(),
+                SystemSettingsService.Scope.SYSTEM,
                 null,
-                null,
-                null,
-                UserActionType.UNFREEZE,
-                UserActionCategory.SOCIAL,
-                null,
-                "user",
-                false,
-                "UNFREEZE",
-                null
+                key,
+                String.valueOf(def)
         );
-
-        notificationService.notifyUserUnfreezeApplied(targetUserId, actorId);
-
-        return action;
+        return "true".equalsIgnoreCase(raw.trim()) || "1".equals(raw.trim());
     }
 
-    /**
-     * צפייה בפרופיל — VIEW
-     * - listName = "VIEW"
-     * - משתמשים בסטטיסטיקה לצפיות בפרופיל (SUMMARY)
-     */
-    public UserAction viewProfile(Long actorId, Long targetUserId, Long weddingId) {
-
-        return recordActionInternal(
-                actorId,
-                targetUserId,
-                weddingId,
-                weddingId,
-                null,
-                UserActionType.VIEW,
-                UserActionCategory.SOCIAL,
-                null,
-                "user",
-                false,
-                "VIEW",
-                null
-        );
+    private Pageable page(int limit) {
+        int max = getIntSetting(K_MAX_PAGE_SIZE, 200);
+        int size = (limit <= 0) ? Math.min(50, max) : Math.min(limit, max);
+        return PageRequest.of(0, size);
     }
 
-    // =====================================================================
-    // 5️⃣ עזר: כיבוי פעולות קודמות
-    // =====================================================================
-
-    /**
-     * מכבה (active=false) פעולה קודמת מאותו סוג בין אותם משתמשים.
-     */
-    private void deactivatePreviousActions(Long actorId,
-                                           Long targetId,
-                                           UserActionType type) {
-
-        User actor = loadUserOrThrow(actorId, "Actor not found: ");
-        User target = loadUserOrThrow(targetId, "Target not found: ");
-
-        userActionRepository.findByActorAndTarget(actor, target)
-                .stream()
-                .filter(a -> a.isActive() && a.getActionType() == type)
-                .forEach(a -> {
-                    a.setActive(false);
-                    a.setUpdatedAt(LocalDateTime.now());
-                    userActionRepository.save(a);
-                });
+    private static String safeTrim(String s) {
+        return (s == null) ? null : s.trim();
     }
 
-    /**
-     * כיבוי קודמים פרט לפעולה שכרגע נוצרה.
-     */
-    private void deactivatePreviousActions(Long actorId,
-                                           Long targetId,
-                                           UserActionType type,
-                                           Long excludeId) {
-
-        User actor = loadUserOrThrow(actorId, "Actor not found: ");
-        User target = loadUserOrThrow(targetId, "Target not found: ");
-
-        userActionRepository.findByActorAndTarget(actor, target)
-                .stream()
-                .filter(a -> !a.getId().equals(excludeId))
-                .filter(a -> a.isActive() && a.getActionType() == type)
-                .forEach(a -> {
-                    a.setActive(false);
-                    a.setUpdatedAt(LocalDateTime.now());
-                    userActionRepository.save(a);
-                });
+    private static List<UserAction> limit(List<UserAction> rows, int limit) {
+        if (rows == null || rows.isEmpty()) return Collections.emptyList();
+        if (limit <= 0 || rows.size() <= limit) return rows;
+        return rows.subList(0, limit);
     }
 
-    // =====================================================================
-    // 6️⃣ רשימות לפי listName (LIKE / DISLIKE / FREEZE / VIEW)
-    // =====================================================================
-
-    /**
-     * כל הפעולות הפעילות של משתמש ברשימה מסוימת (LIKE / DISLIKE / FREEZE / VIEW וכו').
-     */
-    @Transactional(readOnly = true)
-    public List<UserAction> getListForUser(Long actorId, String listName) {
-        return userActionRepository.findByActorIdAndListName(actorId, listName)
-                .stream()
-                .filter(UserAction::isActive)
+    private static List<UserAction> sortByCreatedDesc(List<UserAction> rows) {
+        if (rows == null) return Collections.emptyList();
+        return rows.stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparing(UserAction::getCreatedAt, Comparator.nullsLast(Comparator.reverseOrder())))
                 .collect(Collectors.toList());
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getMyLikes(Long actorId) {
-        return getListForUser(actorId, "LIKE");
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getMyDislikes(Long actorId) {
-        return getListForUser(actorId, "DISLIKE");
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getMyFreezes(Long actorId) {
-        return getListForUser(actorId, "FREEZE");
-    }
-
-    @Transactional(readOnly = true)
-    public List<UserAction> getMyProfileViews(Long actorId) {
-        return getListForUser(actorId, "VIEW");
-    }
-
-    // =====================================================================
-    // 7️⃣ סיכום צפיות בפרופיל (לפי אפיון 2025 + NotificationService)
-    // =====================================================================
-
-    /**
-     * ספירת צפיות בפרופיל של משתמש בתקופה מסוימת.
-     * משתמש ב־findByCreatedAtBetween ואז מסנן ב-Java.
-     */
-    @Transactional(readOnly = true)
-    public int countProfileViewsForUserInPeriod(Long userId,
-                                                LocalDateTime from,
-                                                LocalDateTime to) {
-
-        List<UserAction> allInPeriod =
-                userActionRepository.findByCreatedAtBetween(from, to);
-
-        return (int) allInPeriod.stream()
-                .filter(a -> a.getTarget() != null
-                        && a.getTarget().getId().equals(userId)
-                        && a.getActionType() == UserActionType.VIEW)
-                .count();
-    }
-
-    /**
-     * יצירת התראת סיכום צפיות בפרופיל למשתמש (שימוש ב-NotificationService).
-     */
-    public void sendProfileViewsSummary(Long userId,
-                                        String periodLabel,
-                                        LocalDateTime from,
-                                        LocalDateTime to) {
-
-        int views = countProfileViewsForUserInPeriod(userId, from, to);
-        notificationService.notifyProfileViewsSummary(userId, periodLabel, views);
     }
 }
