@@ -3,6 +3,8 @@ package com.example.myproject.repository;
 import com.example.myproject.model.UserSettings;
 import com.example.myproject.model.enums.DefaultMode;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -13,7 +15,7 @@ import java.util.Optional;
 public interface UserSettingsRepository extends JpaRepository<UserSettings, Long> {
 
     // ============================================================
-    // 🔵 1. שליפות בסיסיות לפי משתמש
+    // 1) בסיסי לפי משתמש
     // ============================================================
 
     Optional<UserSettings> findByUser_Id(Long userId);
@@ -22,30 +24,26 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
 
     void deleteByUser_Id(Long userId);
 
-
     // ============================================================
-    // 🔵 2. מצב פתיחה (DefaultMode: GLOBAL / WEDDING)
+    // 2) DefaultMode
     // ============================================================
 
     List<UserSettings> findByDefaultMode(DefaultMode defaultMode);
 
     long countByDefaultMode(DefaultMode defaultMode);
 
-    // משתמשים שההגדרה שלהם שונה מהברירת־מחדל (לניתוח SystemRules)
     List<UserSettings> findByDefaultModeNot(DefaultMode defaultMode);
 
-
     // ============================================================
-    // 🔵 3. לוגיקת מגדר — צפייה באותו המין
+    // 3) Same-gender view
     // ============================================================
 
     List<UserSettings> findByCanViewSameGenderTrue();
 
     long countByCanViewSameGenderTrue();
 
-
     // ============================================================
-    // 🔵 4. Anti-Spam אישי (Like / Message Cooldown)
+    // 4) Anti-Spam אישי
     // ============================================================
 
     List<UserSettings> findByAutoAntiSpamTrue();
@@ -56,9 +54,8 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
 
     List<UserSettings> findByMessageCooldownSecondsLessThanEqual(Integer seconds);
 
-
     // ============================================================
-    // 🔵 5. שימוש רוחבי ל-Dashboard / ניתוח הגדרות
+    // 5) Dashboard / JSON usage
     // ============================================================
 
     long countByShortCardFieldsJsonIsNotNull();
@@ -67,41 +64,53 @@ public interface UserSettingsRepository extends JpaRepository<UserSettings, Long
 
     long countByExtraSettingsJsonIsNotNull();
 
-
     // ============================================================
-    // 🔵 6. ⚠ Lock Mode After Wedding — תמיכה מלאה בחוקי מערכת
-    //     (Rules: 14, 19, 23, 27 — משתמש נעול עד שיסיים פרופיל מלא)
+    // 6) Lock After Wedding — semantics “נעול כרגע”
+    // lockedAfterWedding=true AND (lockedUntil IS NULL OR lockedUntil > now)
     // ============================================================
 
-    // מי מוגדר כנעול אחרי חתונה
     List<UserSettings> findByLockedAfterWeddingTrue();
 
-    // מי עדיין נעול (lockedUntil > now)
+    // Legacy / תאימות: לא כולל lockedUntil NULL
     List<UserSettings> findByLockedAfterWeddingTrueAndLockedUntilAfter(LocalDateTime now);
 
-    // כמה משתמשים במצב Lock (ללא קשר ל־lockedUntil)
     long countByLockedAfterWeddingTrue();
 
+    @Query("""
+            select us
+            from UserSettings us
+            where us.lockedAfterWedding = true
+              and (us.lockedUntil is null or us.lockedUntil > :now)
+            """)
+    List<UserSettings> findCurrentlyLockedIncludingNull(@Param("now") LocalDateTime now);
+
+    @Query("""
+            select count(us)
+            from UserSettings us
+            where us.lockedAfterWedding = true
+              and (us.lockedUntil is null or us.lockedUntil > :now)
+            """)
+    long countCurrentlyLockedIncludingNull(@Param("now") LocalDateTime now);
+
+    // Locks שפגו (ל-Job auto-unlock)
+    List<UserSettings> findByLockedAfterWeddingTrueAndLockedUntilIsNotNullAndLockedUntilBefore(LocalDateTime now);
 
     // ============================================================
-    // 🔵 7. תחזוקה / ניקוי לפי זמן
+    // 7) Maintenance לפי זמן
     // ============================================================
 
     List<UserSettings> findByUpdatedAtAfter(LocalDateTime time);
 
     List<UserSettings> findByCreatedAtBefore(LocalDateTime time);
 
-
     // ============================================================
-    // 🔵 8. סטטיסטיקות מתקדמות — Anti-Spam & Lock
+    // 8) סטטיסטיקות מתקדמות
     // ============================================================
 
-    // כמה משתמשים עם Anti-Spam אוטומטי ובקירור לייק קטן/שווה לערך מסוים
     long countByAutoAntiSpamTrueAndLikeCooldownSecondsLessThanEqual(Integer seconds);
 
-    // כמה משתמשים עם Anti-Spam אוטומטי ובקירור הודעות קטן/שווה לערך מסוים
     long countByAutoAntiSpamTrueAndMessageCooldownSecondsLessThanEqual(Integer seconds);
 
-    // כמה משתמשים עדיין נעולים כרגע (lockedAfterWedding + lockedUntil > now)
+    // Legacy / תאימות: לא כולל lockedUntil NULL
     long countByLockedAfterWeddingTrueAndLockedUntilAfter(LocalDateTime now);
 }
