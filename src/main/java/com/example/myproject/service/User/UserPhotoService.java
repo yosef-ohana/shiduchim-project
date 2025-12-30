@@ -60,8 +60,7 @@ public class UserPhotoService {
 
     private int computeNextPositionIndex(Long userId) {
         List<UserPhoto> photos =
-                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByPositionIndexAsc(userId);
-        if (photos.isEmpty()) return 0;
+                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByPositionIndexAscIdAsc(userId);        if (photos.isEmpty()) return 0;
         return photos.stream()
                 .map(UserPhoto::getPositionIndex)
                 .filter(i -> i != null)
@@ -97,8 +96,7 @@ public class UserPhotoService {
 
     private void setPrimaryPhotoInternal(User user, UserPhoto newPrimary) {
         List<UserPhoto> photos =
-                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByIdAsc(user.getId());
-
+                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByPositionIndexAscIdAsc(user.getId());
         for (UserPhoto p : photos) {
             if (p.getId().equals(newPrimary.getId())) {
                 p.setPrimaryPhoto(true);
@@ -134,8 +132,7 @@ public class UserPhotoService {
         if (wasPrimary) {
             // נמצא תמונה אחרת שתהיה ראשית (אם קיימת)
             List<UserPhoto> remaining =
-                    userPhotoRepository.findByUser_IdAndDeletedFalseOrderByIdAsc(userId);
-            if (!remaining.isEmpty()) {
+                    userPhotoRepository.findByUser_IdAndDeletedFalseOrderByPositionIndexAscIdAsc(userId);            if (!remaining.isEmpty()) {
                 remaining.get(0).setPrimaryPhoto(true);
                 userPhotoRepository.save(remaining.get(0));
                 user.setHasPrimaryPhoto(true);
@@ -153,8 +150,7 @@ public class UserPhotoService {
 
     public void lockPhotosAfterWedding(Long userId) {
         List<UserPhoto> photos =
-                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByIdAsc(userId);
-        for (UserPhoto p : photos) {
+                userPhotoRepository.findByUser_IdAndDeletedFalseOrderByPositionIndexAscIdAsc(userId);        for (UserPhoto p : photos) {
             p.setLockedAfterWedding(true);
         }
         userPhotoRepository.saveAll(photos);

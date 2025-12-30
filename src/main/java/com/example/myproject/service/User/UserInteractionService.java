@@ -106,13 +106,13 @@ public class UserInteractionService {
     // =====================================================
 
     public void unfreezeUser(Long actorId, Long targetId) {
-        userActionRepository.deleteByActorIdAndTargetIdAndActionType(
+        userActionRepository.deleteByActor_IdAndTarget_IdAndActionType(
                 actorId, targetId, UserActionType.FREEZE
         );
     }
 
     public void removeAllInteractions(Long actorId, Long targetId) {
-        userActionRepository.deleteByActorIdAndTargetId(actorId, targetId);
+        userActionRepository.deleteByActor_IdAndTarget_Id(actorId, targetId);
     }
 
     // =====================================================

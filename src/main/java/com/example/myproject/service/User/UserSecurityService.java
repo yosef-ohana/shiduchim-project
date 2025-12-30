@@ -62,7 +62,7 @@ public class UserSecurityService {
         User actor = getUserOrThrow(actorId);
         User target = getUserOrThrow(targetId);
 
-        userActionRepository.deleteByActorIdAndTargetIdAndActionType(
+        userActionRepository.deleteByActor_IdAndTarget_IdAndActionType(
                 actor.getId(), target.getId(), UserActionType.BLOCK
         );
     }
@@ -75,7 +75,7 @@ public class UserSecurityService {
      * האם actor חסם את target.
      */
     public boolean isBlocked(Long actorId, Long targetId) {
-        return userActionRepository.existsByActorIdAndTargetIdAndActionType(
+        return userActionRepository.existsByActor_IdAndTarget_IdAndActionType(
                 actorId, targetId, UserActionType.BLOCK
         );
     }
