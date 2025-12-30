@@ -29,6 +29,9 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
             ReportStatus status
     );
 
+    // ✅ (אופציונלי, אופטימיזציה לאנטי-ספאם) — לא שובר כלום
+    long countByReporterIdAndCreatedAtAfter(Long reporterId, LocalDateTime since);
+
 
     // ============================================================
     // 🔵 2. על מי מדווחים — Target User
@@ -141,10 +144,8 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     // 🔵 10. אנטי-ספאם — Reporter Abuse Prevention
     // ============================================================
 
-    long countByReporterIdAndCreatedAtAfter(
-            Long reporterId,
-            LocalDateTime since
-    );
+    // (נמצא גם למעלה כ-#1 opt, נשאר כאן כחלק מהיכולות שלך)
+    // long countByReporterIdAndCreatedAtAfter(Long reporterId, LocalDateTime since);
 
 
     // ============================================================
@@ -154,6 +155,11 @@ public interface UserReportRepository extends JpaRepository<UserReport, Long> {
     List<UserReport> findByCreatedAtBefore(LocalDateTime olderThan);
 
     List<UserReport> findByUpdatedAtBefore(LocalDateTime olderThan);
+
+    // ✅ אופטימיזציה (Bulk delete ישיר DB) — לא חובה להשתמש, אבל חשוב לביצועים
+    long deleteByCreatedAtBefore(LocalDateTime olderThan);
+
+    long deleteByUpdatedAtBefore(LocalDateTime olderThan);
 
 
     // ============================================================
