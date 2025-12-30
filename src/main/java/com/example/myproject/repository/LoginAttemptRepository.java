@@ -1,8 +1,12 @@
 package com.example.myproject.repository;
 
 import com.example.myproject.model.LoginAttempt;
-import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.*;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -15,24 +19,35 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 1. שליפות בסיסיות לפי אימייל/טלפון
     // ============================================================
 
-    List<LoginAttempt> findByEmailOrPhoneOrderByAttemptTimeDesc(String emailOrPhone);
+    /**
+     * ⚠️ קריטי: EmailOrPhone בשם השדה גורם ל-Spring לפרש "OR".
+     * ✅ לכן מכריחים JPQL מפורש על השדה emailOrPhone.
+     */
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "order by la.attemptTime desc")
+    List<LoginAttempt> findByEmailOrPhoneOrderByAttemptTimeDesc(@Param("emailOrPhone") String emailOrPhone);
 
-    Optional<LoginAttempt> findTopByEmailOrPhoneOrderByAttemptTimeDesc(String emailOrPhone);
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "order by la.attemptTime desc")
+    Optional<LoginAttempt> findTopByEmailOrPhoneOrderByAttemptTimeDesc(@Param("emailOrPhone") String emailOrPhone);
 
 
     // ============================================================
     // 🔵 2. שליפות לפי טווח זמן / אבטחה
     // ============================================================
 
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.success = false " +
+            "and la.attemptTime > :since")
     List<LoginAttempt> findByEmailOrPhoneAndSuccessFalseAndAttemptTimeAfter(
-            String emailOrPhone,
-            LocalDateTime since
+            @Param("emailOrPhone") String emailOrPhone,
+            @Param("since") LocalDateTime since
     );
 
-    List<LoginAttempt> findByAttemptTimeBetween(
-            LocalDateTime start,
-            LocalDateTime end
-    );
+    List<LoginAttempt> findByAttemptTimeBetween(LocalDateTime start, LocalDateTime end);
 
 
     // ============================================================
@@ -41,7 +56,10 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
 
     List<LoginAttempt> findByTemporaryBlockedTrue();
 
-    List<LoginAttempt> findByEmailOrPhoneAndTemporaryBlockedTrue(String emailOrPhone);
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.temporaryBlocked = true")
+    List<LoginAttempt> findByEmailOrPhoneAndTemporaryBlockedTrue(@Param("emailOrPhone") String emailOrPhone);
 
     List<LoginAttempt> findByBlockedUntilAfter(LocalDateTime now);
 
@@ -50,9 +68,15 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 4. OTP – ניסיונות שמחייבים אימות נוסף
     // ============================================================
 
-    List<LoginAttempt> findByEmailOrPhoneAndRequiresOtpTrue(String emailOrPhone);
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.requiresOtp = true")
+    List<LoginAttempt> findByEmailOrPhoneAndRequiresOtpTrue(@Param("emailOrPhone") String emailOrPhone);
 
-    long countByEmailOrPhoneAndRequiresOtpTrue(String emailOrPhone);
+    @Query("select count(la) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.requiresOtp = true")
+    long countByEmailOrPhoneAndRequiresOtpTrue(@Param("emailOrPhone") String emailOrPhone);
 
 
     // ============================================================
@@ -89,12 +113,18 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 7. התראות אבטחה (SystemRules §22)
     // ============================================================
 
+    @Query("select count(la) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.attemptTime > :since")
     long countByEmailOrPhoneAndAttemptTimeAfter(
-            String emailOrPhone,
-            LocalDateTime since
+            @Param("emailOrPhone") String emailOrPhone,
+            @Param("since") LocalDateTime since
     );
 
-    long countByEmailOrPhoneAndSuccessFalse(String emailOrPhone);
+    @Query("select count(la) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.success = false")
+    long countByEmailOrPhoneAndSuccessFalse(@Param("emailOrPhone") String emailOrPhone);
 
 
     // ============================================================
@@ -105,21 +135,42 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
 
     List<LoginAttempt> findByAttemptTimeBefore(LocalDateTime threshold);
 
+    /**
+     * 🧱 תשתית קדימה: מחיקה פיזית של ניסיונות ישנים (ל-Jobs).
+     * (לא שובר כלום כי זו תוספת בלבד)
+     */
+    @Transactional
+    @Modifying
+    @Query("delete from LoginAttempt la where la.attemptTime < :threshold")
+    int deleteAllByAttemptTimeBefore(@Param("threshold") LocalDateTime threshold);
+
 
     // ============================================================
     // 🔵 9. שליפות מיוחדות לשירות האבטחה
     // ============================================================
 
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.temporaryBlocked = false " +
+            "order by la.attemptTime desc")
     Optional<LoginAttempt> findTopByEmailOrPhoneAndTemporaryBlockedFalseOrderByAttemptTimeDesc(
-            String emailOrPhone
+            @Param("emailOrPhone") String emailOrPhone
     );
 
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.success = false " +
+            "order by la.attemptTime desc")
     Optional<LoginAttempt> findTopByEmailOrPhoneAndSuccessFalseOrderByAttemptTimeDesc(
-            String emailOrPhone
+            @Param("emailOrPhone") String emailOrPhone
     );
 
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.success = true " +
+            "order by la.attemptTime desc")
     Optional<LoginAttempt> findTopByEmailOrPhoneAndSuccessTrueOrderByAttemptTimeDesc(
-            String emailOrPhone
+            @Param("emailOrPhone") String emailOrPhone
     );
 
 
@@ -127,43 +178,77 @@ public interface LoginAttemptRepository extends JpaRepository<LoginAttempt, Long
     // 🔵 10. תוספות חדשות – איתור מתקפות חכמות
     // ============================================================
 
-    // 🆕 ניסיון לפי אימייל + IP (לזהות השתלטות חיצונית)
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.ipAddress = :ipAddress " +
+            "order by la.attemptTime desc")
     List<LoginAttempt> findByEmailOrPhoneAndIpAddressOrderByAttemptTimeDesc(
-            String emailOrPhone,
-            String ipAddress
+            @Param("emailOrPhone") String emailOrPhone,
+            @Param("ipAddress") String ipAddress
     );
 
-    // 🆕 כל הנסיונות לפי deviceId (מכשיר מסוים)
     List<LoginAttempt> findByDeviceIdOrderByAttemptTimeDesc(String deviceId);
 
-    // 🆕 כמות ניסיונות כושלים ממכשיר מסוים בזמן קצר
     long countByDeviceIdAndSuccessFalseAndAttemptTimeAfter(
             String deviceId,
             LocalDateTime since
     );
 
-    // 🆕 ניסיון אחרון ממכשיר מסוים
     Optional<LoginAttempt> findTopByDeviceIdOrderByAttemptTimeDesc(String deviceId);
 
-    // 🆕 כמה מכשירים שונים ניסו להתחבר לאותו חשבון
-    long countDistinctByEmailOrPhoneAndDeviceIdIsNotNull(String emailOrPhone);
+    @Query("select count(distinct la.deviceId) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.deviceId is not null")
+    long countDistinctByEmailOrPhoneAndDeviceIdIsNotNull(@Param("emailOrPhone") String emailOrPhone);
 
 
     // ============================================================
     // 🔵 11. אנליזה מתקדמת — Risk Engine (תשתית)
     // ============================================================
 
-    // 🆕 כמות ניסיונות במכשיר *וב־IP* כקרוס־קורלציה (BRUTE + BOT)
     long countByIpAddressAndDeviceIdAndSuccessFalseAndAttemptTimeAfter(
             String ipAddress,
             String deviceId,
             LocalDateTime since
     );
 
-    // 🆕 כמות ניסיונות עם userAgent חדש (מכשיר חדש / לקוח חשוד)
+    @Query("select count(la) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.userAgent = :userAgent " +
+            "and la.attemptTime > :since")
     long countByEmailOrPhoneAndUserAgentAndAttemptTimeAfter(
-            String emailOrPhone,
-            String userAgent,
-            LocalDateTime since
+            @Param("emailOrPhone") String emailOrPhone,
+            @Param("userAgent") String userAgent,
+            @Param("since") LocalDateTime since
+    );
+
+
+    // ============================================================
+    // 🧱 תשתית קדימה (לא שובר תלויים): Paging/Monitoring
+    // ============================================================
+
+    /**
+     * Paging של ניסיונות לפי חשבון (ל-UI/אדמין/חקירה).
+     */
+    @Query("select la from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "order by la.attemptTime desc")
+    Page<LoginAttempt> findByEmailOrPhoneOrderByAttemptTimeDesc(
+            @Param("emailOrPhone") String emailOrPhone,
+            Pageable pageable
+    );
+
+    /**
+     * כמות כישלונות אחרונים עבור חשבון + IP (עוזר ל-Rules/Anomaly).
+     */
+    @Query("select count(la) from LoginAttempt la " +
+            "where la.emailOrPhone = :emailOrPhone " +
+            "and la.ipAddress = :ipAddress " +
+            "and la.success = false " +
+            "and la.attemptTime > :since")
+    long countFailedByEmailOrPhoneAndIpSince(
+            @Param("emailOrPhone") String emailOrPhone,
+            @Param("ipAddress") String ipAddress,
+            @Param("since") LocalDateTime since
     );
 }

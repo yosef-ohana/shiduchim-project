@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -21,6 +22,9 @@ public interface SystemSettingsRepository extends JpaRepository<SystemSettings, 
 
     void deleteByKeyName(String keyName);
 
+    // ✅ אופטימיזציה למחיקות מרובות (תחזוקה/ניקוי)
+    void deleteByKeyNameIn(Collection<String> keyNames);
+
     // ============================================================
     // 🔵 Dashboard / חיפוש UI
     // ============================================================
@@ -30,6 +34,16 @@ public interface SystemSettingsRepository extends JpaRepository<SystemSettings, 
     List<SystemSettings> findByKeyNameContainingIgnoreCase(String text);
 
     List<SystemSettings> findByDescriptionContainingIgnoreCase(String text);
+
+    // ✅ חסר לסרביס: חיפוש גם בערך (Admin Search מלא)
+    List<SystemSettings> findByValueContainingIgnoreCase(String text);
+
+    // ============================================================
+    // 🔵 Auto Refresh / Live updates (prefix + time)
+    // ============================================================
+
+    // ✅ חסר לסרביס: שליפות “שינוי מאז זמן” תחת prefix (Jobs/Refresh)
+    List<SystemSettings> findByKeyNameStartingWithAndUpdatedAtAfter(String prefix, LocalDateTime time);
 
     // ============================================================
     // 🔵 תחזוקה לפי זמן (יש לנו updatedAt בלבד)

@@ -2,9 +2,12 @@ package com.example.myproject.repository;
 
 import com.example.myproject.model.SystemConfig;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -12,7 +15,7 @@ import java.util.Optional;
 public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long> {
 
     // ============================================================
-    // 🔵 1. קונפיג עדכני לפי environment
+    // 🔵 1) Latest / History by environment (REAL fields)
     // ============================================================
 
     Optional<SystemConfig> findTopByEnvironmentOrderByCreatedAtDesc(String environment);
@@ -23,30 +26,36 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
 
     List<SystemConfig> findByEnvironmentIsNullOrderByCreatedAtDesc();
 
+    /**
+     * נוח לטעינה מרוכזת: env + גלובלי יחד (service יעשה merge + precedence)
+     */
+    List<SystemConfig> findByEnvironmentOrEnvironmentIsNullOrderByCreatedAtDesc(String environment);
 
     // ============================================================
-    // 🔵 2. בדיקות קיום וספירה
+    // 🔵 2) Existence / Counting
     // ============================================================
 
     boolean existsByEnvironment(String environment);
 
     long countByEnvironment(String environment);
 
+    // ============================================================
+    // 🔵 3) Bulk loading (Warmup / Dashboard)
+    // ============================================================
+
+    List<SystemConfig> findByEnvironmentIn(Collection<String> environments);
 
     // ============================================================
-    // 🔵 3. טעינת הגדרות בקבוצות (Warmup / Dashboard)
-    // ============================================================
-
-    List<SystemConfig> findByEnvironmentIn(List<String> environments);
-
-
-    // ============================================================
-    // 🔵 4. תחזוקה / ניקוי לפי תאריכים
+    // 🔵 4) Maintenance by dates (REAL fields)
     // ============================================================
 
     List<SystemConfig> findByCreatedAtBefore(LocalDateTime time);
 
+    List<SystemConfig> findByCreatedAtAfter(LocalDateTime time);
+
     List<SystemConfig> findByUpdatedAtAfter(LocalDateTime time);
+
+    List<SystemConfig> findByUpdatedAtBefore(LocalDateTime time);
 
     List<SystemConfig> findByEnvironmentAndCreatedAtBetween(
             String environment,
@@ -54,147 +63,155 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
             LocalDateTime end
     );
 
-
     // ============================================================
-    // 🔵 5. קונפיג אחרון בכלל המערכת
+    // 🔵 5) Latest overall (REAL fields)
     // ============================================================
 
     Optional<SystemConfig> findTopByOrderByCreatedAtDesc();
 
+    Optional<SystemConfig> findTopByOrderByUpdatedAtDesc();
+
+    List<SystemConfig> findAllByOrderByCreatedAtDesc();
 
     // ============================================================
-    // 🔵 6. שאילתות לפי key (SystemRules §5)
+    // 🟣 6) JSON search (Best-effort, no entity changes)
     // ============================================================
 
-    Optional<SystemConfig> findTopByConfigKeyOrderByCreatedAtDesc(String configKey);
+    List<SystemConfig> findByJsonConfigContainingIgnoreCase(String text);
 
-    List<SystemConfig> findByConfigKeyOrderByCreatedAtDesc(String configKey);
+    List<SystemConfig> findByEnvironmentAndJsonConfigContainingIgnoreCase(String environment, String text);
 
-    boolean existsByConfigKey(String configKey);
-
-    List<SystemConfig> findByConfigKeyIn(List<String> keys);
-
+    List<SystemConfig> findByEnvironmentIsNullAndJsonConfigContainingIgnoreCase(String text);
 
     // ============================================================
-    // 🔵 7. שאילתות לפי category (notifications / limits / ai ...)
+    // 🟠 7) JSON “capabilities” (Best-effort) - Robust patterns
+    //      Supports:
+    //        - "configKey":"X" OR "key":"X"
+    //        - with/without spaces after colon
     // ============================================================
 
-    List<SystemConfig> findByCategoryOrderByCreatedAtDesc(String category);
+    @Query("""
+           select c from SystemConfig c
+           where c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like lower(concat('%"configKey":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"configKey" : "', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key" : "', :k, '"%'))
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByConfigKeyInJsonOrderByCreatedAtDesc(@Param("k") String configKeyOrKey);
 
-    Optional<SystemConfig> findTopByCategoryOrderByCreatedAtDesc(String category);
-
-    List<SystemConfig> findByCategoryInOrderByCreatedAtDesc(List<String> categories);
-
-
-    // ============================================================
-    // 🔵 8. key + environment override (SystemRules §6)
-    // ============================================================
-
-    Optional<SystemConfig> findTopByEnvironmentAndConfigKeyOrderByCreatedAtDesc(
-            String environment,
-            String configKey
+    @Query("""
+           select c from SystemConfig c
+           where c.environment = :env
+             and c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like lower(concat('%"configKey":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"configKey" : "', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key" : "', :k, '"%'))
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByEnvironmentAndConfigKeyInJsonOrderByCreatedAtDesc(
+            @Param("env") String environment,
+            @Param("k") String configKeyOrKey
     );
 
-    List<SystemConfig> findByEnvironmentAndConfigKeyOrderByCreatedAtDesc(
-            String environment,
-            String configKey
+    @Query("""
+           select c from SystemConfig c
+           where c.environment is null
+             and c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like lower(concat('%"configKey":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"configKey" : "', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key":"', :k, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"key" : "', :k, '"%'))
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByGlobalConfigKeyInJsonOrderByCreatedAtDesc(@Param("k") String configKeyOrKey);
+
+    // ============================================================
+    // 🟠 8) Category via JSON (robust spacing)
+    // ============================================================
+
+    @Query("""
+           select c from SystemConfig c
+           where c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like lower(concat('%"category":"', :cat, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"category" : "', :cat, '"%'))
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByCategoryInJsonOrderByCreatedAtDesc(@Param("cat") String category);
+
+    @Query("""
+           select c from SystemConfig c
+           where c.environment = :env
+             and c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like lower(concat('%"category":"', :cat, '"%'))
+               or lower(c.jsonConfig) like lower(concat('%"category" : "', :cat, '"%'))
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByEnvironmentAndCategoryInJsonOrderByCreatedAtDesc(
+            @Param("env") String environment,
+            @Param("cat") String category
     );
 
-
     // ============================================================
-    // 🔵 9. Active Config Only (SystemConfig.active = true)
-    // ============================================================
-
-    List<SystemConfig> findByActiveTrue();
-
-    List<SystemConfig> findByEnvironmentAndActiveTrue(String environment);
-
-    Optional<SystemConfig> findTopByConfigKeyAndActiveTrueOrderByCreatedAtDesc(String configKey);
-
-    Optional<SystemConfig> findTopByCategoryAndActiveTrueOrderByCreatedAtDesc(String category);
-
-    // 🆕 גלובל Active בלבד (environment = null)
-    List<SystemConfig> findByEnvironmentIsNullAndActiveTrueOrderByCreatedAtDesc();
-
-    Optional<SystemConfig> findTopByEnvironmentIsNullAndActiveTrueOrderByCreatedAtDesc();
-
-
-    // ============================================================
-    // 🔵 10. Effective Date — קונפיג עתידי / נכנס לתוקף (SystemRules §17)
+    // 🟠 9) Active via JSON (active OR enabled OR isActive)
     // ============================================================
 
-    List<SystemConfig> findByEffectiveAtBefore(LocalDateTime time);
+    @Query("""
+           select c from SystemConfig c
+           where c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like '%"active":true%'
+               or lower(c.jsonConfig) like '%"active" : true%'
+               or lower(c.jsonConfig) like '%"enabled":true%'
+               or lower(c.jsonConfig) like '%"enabled" : true%'
+               or lower(c.jsonConfig) like '%"isactive":true%'
+               or lower(c.jsonConfig) like '%"isactive" : true%'
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findActiveInJsonOrderByCreatedAtDesc();
 
-    List<SystemConfig> findByEffectiveAtAfter(LocalDateTime time);
+    @Query("""
+           select c from SystemConfig c
+           where c.environment = :env
+             and c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like '%"active":true%'
+               or lower(c.jsonConfig) like '%"active" : true%'
+               or lower(c.jsonConfig) like '%"enabled":true%'
+               or lower(c.jsonConfig) like '%"enabled" : true%'
+               or lower(c.jsonConfig) like '%"isactive":true%'
+               or lower(c.jsonConfig) like '%"isactive" : true%'
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findByEnvironmentActiveInJsonOrderByCreatedAtDesc(@Param("env") String environment);
 
-    Optional<SystemConfig> findTopByConfigKeyAndEffectiveAtBeforeOrderByEffectiveAtDesc(
-            String configKey,
-            LocalDateTime now
-    );
-
-    // 🆕 Active + Effective (מה שבפועל בתוקף עכשיו לכל המערכת)
-    List<SystemConfig> findByActiveTrueAndEffectiveAtBefore(LocalDateTime time);
-
-    List<SystemConfig> findByEnvironmentAndActiveTrueAndEffectiveAtBefore(
-            String environment,
-            LocalDateTime time
-    );
-
-    Optional<SystemConfig> findTopByConfigKeyAndActiveTrueAndEffectiveAtBeforeOrderByEffectiveAtDesc(
-            String configKey,
-            LocalDateTime now
-    );
-
-    Optional<SystemConfig> findTopByEnvironmentAndConfigKeyAndActiveTrueAndEffectiveAtBeforeOrderByEffectiveAtDesc(
-            String environment,
-            String configKey,
-            LocalDateTime now
-    );
-
-
-    // ============================================================
-    // 🔵 11. Auditing — מי עדכן מה (Admin Dashboard)
-    // ============================================================
-
-    List<SystemConfig> findByUpdatedByOrderByUpdatedAtDesc(String updatedBy);
-
-    List<SystemConfig> findByUpdatedByAndUpdatedAtAfterOrderByUpdatedAtDesc(
-            String updatedBy,
-            LocalDateTime since
-    );
-
-
-    // ============================================================
-    // 🔵 12. שאילתות משולבות (Category + Key + Active + Env)
-    // ============================================================
-
-    List<SystemConfig> findByCategoryAndEnvironmentAndActiveTrueOrderByCreatedAtDesc(
-            String category,
-            String environment
-    );
-
-    List<SystemConfig> findByConfigKeyAndCategoryAndActiveTrueOrderByCreatedAtDesc(
-            String configKey,
-            String category
-    );
-
-    // 🆕 רשימת קונפיגים Active לפי קטגוריה (ללא סינון Environment)
-    List<SystemConfig> findByCategoryAndActiveTrueOrderByCreatedAtDesc(String category);
-
-    // 🆕 קונפיג Active אחרון לפי קטגוריה + Environment
-    Optional<SystemConfig> findTopByCategoryAndEnvironmentAndActiveTrueOrderByCreatedAtDesc(
-            String category,
-            String environment
-    );
-
-
-    // ============================================================
-    // 🔵 13. שאילתות ל־SystemRules Load (טעינה מרוכזת)
-    // ============================================================
-
-    List<SystemConfig> findByActiveTrueOrderByCreatedAtDesc();
-
-    List<SystemConfig> findByEnvironmentAndActiveTrueOrderByCreatedAtDesc(String environment);
-
-    List<SystemConfig> findByCategoryInAndActiveTrueOrderByCreatedAtDesc(List<String> categories);
+    @Query("""
+           select c from SystemConfig c
+           where c.environment is null
+             and c.jsonConfig is not null
+             and (
+               lower(c.jsonConfig) like '%"active":true%'
+               or lower(c.jsonConfig) like '%"active" : true%'
+               or lower(c.jsonConfig) like '%"enabled":true%'
+               or lower(c.jsonConfig) like '%"enabled" : true%'
+               or lower(c.jsonConfig) like '%"isactive":true%'
+               or lower(c.jsonConfig) like '%"isactive" : true%'
+             )
+           order by c.createdAt desc
+           """)
+    List<SystemConfig> findGlobalActiveInJsonOrderByCreatedAtDesc();
 }
