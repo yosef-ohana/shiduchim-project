@@ -85,6 +85,9 @@ public interface UserActionRepository extends JpaRepository<UserAction, Long> {
     List<UserAction> findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(Long actorId, UserActionType type);
     List<UserAction> findByTarget_IdAndCategoryOrderByCreatedAtDesc(Long targetId, UserActionCategory category);
 
+    // ✅ FIX (יעילות + כדי לא לטעון הכל כשעושים limit ב-service)
+    List<UserAction> findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(Long actorId, UserActionType type, Pageable pageable);
+
     // ============================================================
     // 🔵 6. פעולות בהקשר חתונה / מאגר
     // ============================================================
@@ -124,7 +127,15 @@ public interface UserActionRepository extends JpaRepository<UserAction, Long> {
     // ============================================================
 
     List<UserAction> findByActor_IdAndActionTypeAndCreatedAtAfter(Long actorId, UserActionType type, LocalDateTime since);
+
+    // ✅ קיימת כבר
     List<UserAction> findByCreatedAtAfter(LocalDateTime since);
+
+    // ✅ התוספת שסוגרת את השגיאה שדיברנו עליה
+    List<UserAction> findByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime since, Pageable pageable);
+
+    // (אופציונלי אבל שימושי)
+    List<UserAction> findByCreatedAtAfter(LocalDateTime since, Pageable pageable);
 
     // ============================================================
     // 🔵 10. פעולות לפי מקור (user / admin / system / ai)

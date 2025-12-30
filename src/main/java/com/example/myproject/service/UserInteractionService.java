@@ -14,7 +14,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -64,7 +63,7 @@ public class UserInteractionService {
     // =====================================================
 
     public static class InteractionContext {
-        public WeddingMode mode;              // NONE / WEDDING / GLOBAL / PAST_WEDDING
+        public WeddingMode mode;              // default GLOBAL
         public Long weddingId;
         public Long originWeddingId;
         public Long matchId;
@@ -74,8 +73,8 @@ public class UserInteractionService {
         public String ipAddress;
         public String deviceInfo;
 
-        public boolean liveWeddingRules = false;
-        public boolean enforceUserStateGate = true;
+        public boolean liveWeddingRules = false;        // “חתונה חיה”
+        public boolean enforceUserStateGate = true;     // gate ב-global
     }
 
     public static class InteractionResult {
@@ -105,19 +104,31 @@ public class UserInteractionService {
         User target = getUserOrThrow(targetId);
 
         enforceBasicGuards(actorId, targetId);
-        enforceNotBlockedBetween(actorId, targetId);
+
+        // preload actives once (performance)
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        ActiveIndex targetIdx = loadActorActiveIndex(targetId);
+
+        enforceNotBlockedBetween(actorIdx, targetIdx, actorId, targetId);
         enforceCanPerformPositiveAction(actor, target, ctx, false);
 
-        deactivateConflicts(actorId, targetId, UserActionType.DISLIKE, UserActionType.FREEZE);
+        // Like cancels dislike/freeze
+        deactivateIfExists(actorIdx, actorId, targetId, UserActionType.DISLIKE, UserActionType.FREEZE);
 
         UserActionService.CreateActionCommand cmd = baseCmd(actorId, targetId, ctx);
         cmd.actionType = UserActionType.LIKE;
         cmd.category = mapCategory(cmd.actionType);
         cmd.metadata = buildMetadata(ctx, "LIKE", null);
 
-        UserAction saved = userActionService.record(cmd);
-        boolean mutual = isMutualPositive(actorId, targetId);
+        // optional gate enforcement inside recorder (keeps future consistency)
+        cmd.requireCanLike = (!isLiveWedding(ctx));
 
+        UserAction saved = userActionService.record(cmd);
+
+        // ✅ CRITICAL FIX: update index with the newly created action (otherwise mutual is usually false)
+        actorIdx.put(saved);
+
+        boolean mutual = isMutualLike(actorIdx, targetIdx, actorId, targetId);
         return new InteractionResult(saved, mutual, mutual ? "Mutual positive detected" : "Like recorded");
     }
 
@@ -128,10 +139,15 @@ public class UserInteractionService {
         getUserOrThrow(targetId);
 
         enforceBasicGuards(actorId, targetId);
-        enforceNotBlockedBetween(actorId, targetId);
+
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        ActiveIndex targetIdx = loadActorActiveIndex(targetId);
+
+        enforceNotBlockedBetween(actorIdx, targetIdx, actorId, targetId);
         enforceCanPerformNeutralAction(actorId, ctx);
 
-        deactivateConflicts(actorId, targetId, UserActionType.LIKE, UserActionType.FREEZE);
+        // Dislike cancels like/freeze
+        deactivateIfExists(actorIdx, actorId, targetId, UserActionType.LIKE, UserActionType.FREEZE);
 
         Map<String, String> extra = new LinkedHashMap<>();
         extra.put("undoMinutes", String.valueOf(getIntSetting(K_UNDO_DISLIKE_MINUTES, 10)));
@@ -140,6 +156,8 @@ public class UserInteractionService {
         cmd.actionType = UserActionType.DISLIKE;
         cmd.category = mapCategory(cmd.actionType);
         cmd.metadata = buildMetadata(ctx, "DISLIKE", extra);
+
+        cmd.requireCanLike = (!isLiveWedding(ctx));
 
         UserAction saved = userActionService.record(cmd);
         return new InteractionResult(saved, false, "Dislike recorded");
@@ -151,16 +169,16 @@ public class UserInteractionService {
         int undoMinutes = getIntSetting(K_UNDO_DISLIKE_MINUTES, 10);
         LocalDateTime cutoff = LocalDateTime.now().minusMinutes(Math.max(1, undoMinutes));
 
-        UserAction dislike = findActiveActionBetween(actorId, targetId, UserActionType.DISLIKE);
-        if (dislike == null) return false;
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        UserAction dislike = actorIdx.get(UserActionType.DISLIKE, targetId);
 
-        if (dislike.getCreatedAt() == null || dislike.getCreatedAt().isBefore(cutoff)) {
-            return false;
-        }
+        if (dislike == null) return false;
+        if (dislike.getCreatedAt() == null || dislike.getCreatedAt().isBefore(cutoff)) return false;
 
         dislike.setActive(false);
         dislike.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(dislike);
+        actorIdx.markInactive(UserActionType.DISLIKE, targetId);
         return true;
     }
 
@@ -171,10 +189,15 @@ public class UserInteractionService {
         getUserOrThrow(targetId);
 
         enforceBasicGuards(actorId, targetId);
-        enforceNotBlockedBetween(actorId, targetId);
+
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        ActiveIndex targetIdx = loadActorActiveIndex(targetId);
+
+        enforceNotBlockedBetween(actorIdx, targetIdx, actorId, targetId);
         enforceCanPerformNeutralAction(actorId, ctx);
 
-        deactivateConflicts(actorId, targetId, UserActionType.LIKE, UserActionType.DISLIKE);
+        // Freeze cancels like/dislike
+        deactivateIfExists(actorIdx, actorId, targetId, UserActionType.LIKE, UserActionType.DISLIKE);
 
         int defDays = getIntSetting(K_FREEZE_DEFAULT_DAYS, 14);
         int maxDays = getIntSetting(K_FREEZE_MAX_DAYS, 30);
@@ -193,6 +216,8 @@ public class UserInteractionService {
         cmd.category = mapCategory(cmd.actionType);
         cmd.metadata = buildMetadata(ctx, "FREEZE", extra);
 
+        cmd.requireCanLike = (!isLiveWedding(ctx));
+
         UserAction saved = userActionService.record(cmd);
         return new InteractionResult(saved, false, "Freeze recorded");
     }
@@ -200,15 +225,17 @@ public class UserInteractionService {
     public boolean unfreeze(Long actorId, Long targetId, String reason) {
         enforceBasicGuards(actorId, targetId);
 
-        UserAction fr = findActiveActionBetween(actorId, targetId, UserActionType.FREEZE);
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        UserAction fr = actorIdx.get(UserActionType.FREEZE, targetId);
         if (fr == null) return false;
 
         fr.setActive(false);
         if (reason != null && !reason.isBlank()) fr.setReason(reason.trim());
         fr.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(fr);
+        actorIdx.markInactive(UserActionType.FREEZE, targetId);
 
-        // audit UNFREEZE
+        // audit UNFREEZE action record (optional but useful)
         try {
             InteractionContext ctx = normalizeCtx(null);
             UserActionService.CreateActionCommand cmd = baseCmd(actorId, targetId, ctx);
@@ -216,6 +243,9 @@ public class UserInteractionService {
             cmd.category = mapCategory(cmd.actionType);
             cmd.reason = (reason != null && !reason.isBlank()) ? reason.trim() : null;
             cmd.metadata = buildMetadata(ctx, "UNFREEZE", null);
+            cmd.enforceRateLimit = false;
+            cmd.enforceCooldownSameType = false;
+            cmd.preventDuplicates = false;
             userActionService.record(cmd);
         } catch (Exception ignore) {}
 
@@ -223,8 +253,8 @@ public class UserInteractionService {
     }
 
     /**
-     * אין SUPER_LIKE ב-enum שלך:
-     * LIKE רגיל + metadata superLike=true
+     * SUPER_LIKE לא קיים אצלך ב-enum:
+     * נשמר כ-LIKE + metadata superLike=true
      */
     public InteractionResult superLike(Long actorId, Long targetId, InteractionContext ctx) {
         ctx = normalizeCtx(ctx);
@@ -233,25 +263,34 @@ public class UserInteractionService {
         User target = getUserOrThrow(targetId);
 
         enforceBasicGuards(actorId, targetId);
-        enforceNotBlockedBetween(actorId, targetId);
-        enforceCanPerformPositiveAction(actor, target, ctx, true);
 
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        ActiveIndex targetIdx = loadActorActiveIndex(targetId);
+
+        enforceNotBlockedBetween(actorIdx, targetIdx, actorId, targetId);
+        enforceCanPerformPositiveAction(actor, target, ctx, true);
         enforceSuperLikeDailyCap(actorId);
 
-        deactivateConflicts(actorId, targetId, UserActionType.DISLIKE, UserActionType.FREEZE, UserActionType.LIKE);
+        // SuperLike cancels dislike/freeze/like (replace)
+        deactivateIfExists(actorIdx, actorId, targetId, UserActionType.DISLIKE, UserActionType.FREEZE, UserActionType.LIKE);
 
         Map<String, String> extra = new LinkedHashMap<>();
         extra.put("superLike", "true");
         extra.put("dailyCap", String.valueOf(getIntSetting(K_SUPERLIKE_DAILY_CAP, 5)));
 
         UserActionService.CreateActionCommand cmd = baseCmd(actorId, targetId, ctx);
-        cmd.actionType = UserActionType.LIKE;     // ✅ aligned
+        cmd.actionType = UserActionType.LIKE;
         cmd.category = mapCategory(cmd.actionType);
         cmd.metadata = buildMetadata(ctx, "SUPERLIKE", extra);
 
+        cmd.requireCanLike = (!isLiveWedding(ctx));
+
         UserAction saved = userActionService.record(cmd);
 
-        boolean mutual = isMutualPositive(actorId, targetId);
+        // ✅ CRITICAL FIX: update index so mutual is computed correctly
+        actorIdx.put(saved);
+
+        boolean mutual = isMutualLike(actorIdx, targetIdx, actorId, targetId);
         return new InteractionResult(saved, mutual, mutual ? "Mutual positive detected (via superlike)" : "SuperLike recorded");
     }
 
@@ -263,7 +302,11 @@ public class UserInteractionService {
 
         enforceBasicGuards(actorId, targetId);
 
-        deactivateAllRelationshipActionsBothDirections(actorId, targetId);
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        ActiveIndex targetIdx = loadActorActiveIndex(targetId);
+
+        // cancel relationship actions both directions
+        deactivateRelationshipBothDirections(actorId, targetId, actorIdx, targetIdx);
 
         UserActionService.CreateActionCommand cmd = baseCmd(actorId, targetId, ctx);
         cmd.actionType = UserActionType.BLOCK;
@@ -278,13 +321,15 @@ public class UserInteractionService {
     public boolean unblock(Long actorId, Long targetId, String reason) {
         enforceBasicGuards(actorId, targetId);
 
-        UserAction bl = findActiveActionBetween(actorId, targetId, UserActionType.BLOCK);
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        UserAction bl = actorIdx.get(UserActionType.BLOCK, targetId);
         if (bl == null) return false;
 
         bl.setActive(false);
         if (reason != null && !reason.isBlank()) bl.setReason(reason.trim());
         bl.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(bl);
+        actorIdx.markInactive(UserActionType.BLOCK, targetId);
 
         // audit UNBLOCK
         try {
@@ -294,6 +339,9 @@ public class UserInteractionService {
             cmd.category = mapCategory(cmd.actionType);
             cmd.reason = (reason != null && !reason.isBlank()) ? reason.trim() : null;
             cmd.metadata = buildMetadata(ctx, "UNBLOCK", null);
+            cmd.enforceRateLimit = false;
+            cmd.enforceCooldownSameType = false;
+            cmd.preventDuplicates = false;
             userActionService.record(cmd);
         } catch (Exception ignore) {}
 
@@ -301,7 +349,7 @@ public class UserInteractionService {
     }
 
     /**
-     * אין PROFILE_VIEW, משתמשים ב-VIEW
+     * VIEW בלבד (אין “מי צפה”), רק count
      */
     public long viewProfile(Long viewerId, Long profileUserId, InteractionContext ctx) {
         ctx = normalizeCtx(ctx);
@@ -313,15 +361,18 @@ public class UserInteractionService {
         getUserOrThrow(viewerId);
         getUserOrThrow(profileUserId);
 
-        enforceNotBlockedBetween(viewerId, profileUserId);
+        ActiveIndex viewerIdx = loadActorActiveIndex(viewerId);
+        ActiveIndex profIdx = loadActorActiveIndex(profileUserId);
+        enforceNotBlockedBetween(viewerIdx, profIdx, viewerId, profileUserId);
 
         UserActionService.CreateActionCommand cmd = baseCmd(viewerId, profileUserId, ctx);
         cmd.actionType = UserActionType.VIEW;
         cmd.category = mapCategory(cmd.actionType);
         cmd.metadata = buildMetadata(ctx, "PROFILE_VIEW", null);
 
-        userActionService.record(cmd);
+        cmd.enforceCooldownSameType = false;
 
+        userActionService.record(cmd);
         return getProfileViewsCount(profileUserId);
     }
 
@@ -332,7 +383,9 @@ public class UserInteractionService {
     }
 
     /**
-     * אין REPORT, רושמים UNKNOWN + metadata
+     * IMPORTANT:
+     * לפי אפיון 2025 - דיווח אמיתי חייב ליצור UserReport (מודול UserReport).
+     * כאן נשאיר action "signal" בלבד לצורכי audit/trace.
      */
     public InteractionResult reportUser(Long reporterId, Long targetId, InteractionContext ctx, String reportType, String details) {
         ctx = normalizeCtx(ctx);
@@ -341,7 +394,10 @@ public class UserInteractionService {
         getUserOrThrow(targetId);
 
         enforceBasicGuards(reporterId, targetId);
-        enforceNotBlockedBetween(reporterId, targetId);
+
+        ActiveIndex repIdx = loadActorActiveIndex(reporterId);
+        ActiveIndex tarIdx = loadActorActiveIndex(targetId);
+        enforceNotBlockedBetween(repIdx, tarIdx, reporterId, targetId);
 
         Map<String, String> extra = new LinkedHashMap<>();
         extra.put("report", "true");
@@ -353,8 +409,11 @@ public class UserInteractionService {
         cmd.category = UserActionCategory.SYSTEM;
         cmd.metadata = buildMetadata(ctx, "REPORT", extra);
 
+        cmd.enforceRateLimit = false;
+        cmd.enforceCooldownSameType = false;
+
         UserAction saved = userActionService.record(cmd);
-        return new InteractionResult(saved, false, "Report recorded");
+        return new InteractionResult(saved, false, "Report signal recorded (UserReport must be created separately)");
     }
 
     // =====================================================
@@ -365,13 +424,15 @@ public class UserInteractionService {
         enforceBasicGuards(actorId, targetId);
         if (type == null) throw new IllegalArgumentException("type is null");
 
-        UserAction act = findActiveActionBetween(actorId, targetId, type);
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        UserAction act = actorIdx.get(type, targetId);
         if (act == null) return false;
 
         act.setActive(false);
         if (reason != null && !reason.isBlank()) act.setReason(reason.trim());
         act.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(act);
+        actorIdx.markInactive(type, targetId);
         return true;
     }
 
@@ -382,7 +443,8 @@ public class UserInteractionService {
     public boolean cancelSuperLike(Long actorId, Long targetId, String reason) {
         enforceBasicGuards(actorId, targetId);
 
-        UserAction like = findActiveActionBetween(actorId, targetId, UserActionType.LIKE);
+        ActiveIndex actorIdx = loadActorActiveIndex(actorId);
+        UserAction like = actorIdx.get(UserActionType.LIKE, targetId);
         if (like == null) return false;
         if (!isSuperLike(like)) return false;
 
@@ -390,6 +452,7 @@ public class UserInteractionService {
         if (reason != null && !reason.isBlank()) like.setReason(reason.trim());
         like.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(like);
+        actorIdx.markInactive(UserActionType.LIKE, targetId);
         return true;
     }
 
@@ -402,48 +465,50 @@ public class UserInteractionService {
     }
 
     // =====================================================
-    // ✅ Lists
+    // ✅ Lists (optimized)
     // =====================================================
 
     @Transactional(readOnly = true)
     public List<Long> getLikesGiven(Long actorId, int limit) {
-        return getTargetsByActiveType(actorId, UserActionType.LIKE, limit).stream()
-                .filter(t -> !isSuperLikeTarget(actorId, t))
+        int lim = clamp(limit, 1, 500);
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+
+        return idx.targetsOfType(UserActionType.LIKE).stream()
+                .filter(tid -> {
+                    UserAction ua = idx.get(UserActionType.LIKE, tid);
+                    return ua != null && ua.isActive() && !isSuperLike(ua);
+                })
+                .limit(lim)
+                .collect(Collectors.toList());
+    }
+
+    @Transactional(readOnly = true)
+    public List<Long> getSuperLikesGiven(Long actorId, int limit) {
+        int lim = clamp(limit, 1, 500);
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+
+        return idx.targetsOfType(UserActionType.LIKE).stream()
+                .filter(tid -> {
+                    UserAction ua = idx.get(UserActionType.LIKE, tid);
+                    return ua != null && ua.isActive() && isSuperLike(ua);
+                })
+                .limit(lim)
                 .collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public List<Long> getDislikesGiven(Long actorId, int limit) {
-        return getTargetsByActiveType(actorId, UserActionType.DISLIKE, limit);
+        int lim = clamp(limit, 1, 500);
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+        return idx.targetsOfType(UserActionType.DISLIKE).stream().limit(lim).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
     public List<Long> getFreezesGiven(Long actorId, int limit) {
         try { cleanupExpiredFreezesForActor(actorId); } catch (Exception ignore) {}
-        return getTargetsByActiveType(actorId, UserActionType.FREEZE, limit);
-    }
-
-    @Transactional(readOnly = true)
-    public List<Long> getSuperLikesGiven(Long actorId, int limit) {
-        if (actorId == null) return Collections.emptyList();
         int lim = clamp(limit, 1, 500);
-
-        Pageable p = PageRequest.of(0, lim);
-        List<UserAction> rows = actionRepo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p);
-        if (rows == null) return Collections.emptyList();
-
-        return rows.stream()
-                .filter(Objects::nonNull)
-                .filter(UserAction::isActive)
-                .filter(ua -> ua.getActionType() == UserActionType.LIKE)
-                .filter(this::isSuperLike)
-                .map(UserAction::getTarget)
-                .filter(Objects::nonNull)
-                .map(User::getId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .limit(lim)
-                .collect(Collectors.toList());
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+        return idx.targetsOfType(UserActionType.FREEZE).stream().limit(lim).collect(Collectors.toList());
     }
 
     @Transactional(readOnly = true)
@@ -452,18 +517,28 @@ public class UserInteractionService {
         return getActorsByActiveTypeOnTarget(userId, UserActionType.LIKE, lim);
     }
 
+    /**
+     * Mutual = likesGiven ∩ likesReceived (fast, no loops calling DB)
+     */
     @Transactional(readOnly = true)
     public List<Long> getMutualPositiveTargets(Long actorId, int limit) {
         int lim = clamp(limit, 1, 500);
-        List<Long> positives = getTargetsByActiveType(actorId, UserActionType.LIKE, lim);
 
-        List<Long> res = new ArrayList<>();
-        for (Long t : positives) {
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+        Set<Long> given = new LinkedHashSet<>(idx.targetsOfType(UserActionType.LIKE));
+        if (given.isEmpty()) return Collections.emptyList();
+
+        Set<Long> receivedActors = new LinkedHashSet<>(getActorsByActiveTypeOnTarget(actorId, UserActionType.LIKE, 500));
+
+        List<Long> out = new ArrayList<>();
+        for (Long t : given) {
             if (t == null) continue;
-            if (isMutualPositive(actorId, t)) res.add(t);
-            if (res.size() >= lim) break;
+            if (receivedActors.contains(t)) {
+                out.add(t);
+                if (out.size() >= lim) break;
+            }
         }
-        return res;
+        return out;
     }
 
     // =====================================================
@@ -473,28 +548,25 @@ public class UserInteractionService {
     public int cleanupExpiredFreezesForActor(Long actorId) {
         if (actorId == null) return 0;
 
-        int maxScan = getIntSetting(K_MAX_SCAN_ACTIVE_ACTIONS, 2000);
-        Pageable p = PageRequest.of(0, clamp(maxScan, 50, 5000));
-
-        List<UserAction> actives = actionRepo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p);
-        if (actives == null || actives.isEmpty()) return 0;
-
-        int changed = 0;
+        ActiveIndex idx = loadActorActiveIndex(actorId);
+        List<UserAction> toSave = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();
 
-        for (UserAction ua : actives) {
-            if (ua == null || !ua.isActive()) continue;
-            if (ua.getActionType() != UserActionType.FREEZE) continue;
+        for (Long tid : idx.targetsOfType(UserActionType.FREEZE)) {
+            UserAction ua = idx.get(UserActionType.FREEZE, tid);
+            if (ua == null || !ua.isActive() || ua.getMetadata() == null) continue;
 
             LocalDateTime until = tryParseFreezeUntil(ua.getMetadata());
             if (until != null && until.isBefore(now)) {
                 ua.setActive(false);
                 ua.setUpdatedAt(now);
-                actionRepo.save(ua);
-                changed++;
+                toSave.add(ua);
+                idx.markInactive(UserActionType.FREEZE, tid);
             }
         }
-        return changed;
+
+        if (!toSave.isEmpty()) actionRepo.saveAll(toSave);
+        return toSave.size();
     }
 
     private LocalDateTime tryParseFreezeUntil(String metadata) {
@@ -506,14 +578,27 @@ public class UserInteractionService {
     }
 
     // =====================================================
-    // 🔧 Internal guards + helpers
+    // 🔧 Guards + helpers
     // =====================================================
 
     private InteractionContext normalizeCtx(InteractionContext ctx) {
         if (ctx == null) ctx = new InteractionContext();
         if (ctx.source == null || ctx.source.isBlank()) ctx.source = "user";
-        if (ctx.mode == null) ctx.mode = WeddingMode.GLOBAL; // ✅ aligned default
+        if (ctx.mode == null) ctx.mode = WeddingMode.GLOBAL;
         return ctx;
+    }
+
+    /**
+     * ✅ FIX: לא להסתמך על enum value ספציפי (WEDDING / LIVE_WEDDING וכו')
+     * כדי למנוע אי-סנכרון עם WeddingMode אצלך.
+     */
+    private boolean isLiveWedding(InteractionContext ctx) {
+        if (ctx == null) return false;
+        if (ctx.liveWeddingRules) return true;
+        if (ctx.mode == null) return false;
+        String n = ctx.mode.name();
+        // תומך גם בשמות קיימים/עתידיים בלי לשבור קומפילציה
+        return "LIVE_WEDDING".equalsIgnoreCase(n) || "WEDDING".equalsIgnoreCase(n) || n.toUpperCase().contains("WEDDING");
     }
 
     private User getUserOrThrow(Long id) {
@@ -526,18 +611,14 @@ public class UserInteractionService {
         if (Objects.equals(actorId, targetId)) throw new IllegalArgumentException("Actor cannot target himself");
     }
 
-    private void enforceNotBlockedBetween(Long a, Long b) {
-        if (isBlockedActive(a, b) || isBlockedActive(b, a)) {
+    private void enforceNotBlockedBetween(ActiveIndex aIdx, ActiveIndex bIdx, Long a, Long b) {
+        if (aIdx.get(UserActionType.BLOCK, b) != null || bIdx.get(UserActionType.BLOCK, a) != null) {
             throw new IllegalStateException("Blocked between users");
         }
     }
 
-    private boolean isBlockedActive(Long actorId, Long targetId) {
-        return findActiveActionBetween(actorId, targetId, UserActionType.BLOCK) != null;
-    }
-
     private void enforceCanPerformPositiveAction(User actor, User target, InteractionContext ctx, boolean superLike) {
-        boolean liveWedding = ctx.liveWeddingRules || (ctx.mode == WeddingMode.WEDDING);
+        boolean liveWedding = isLiveWedding(ctx);
 
         if (liveWedding) {
             UserStateEvaluatorService.UserStateSummary a = userStateEvaluator.evaluateUserState(actor);
@@ -552,7 +633,7 @@ public class UserInteractionService {
             return;
         }
 
-        if (!ctx.enforceUserStateGate) return;
+        if (ctx != null && !ctx.enforceUserStateGate) return;
 
         UserStateEvaluatorService.UserStateSummary st = userStateEvaluator.evaluateUserState(actor);
         if (!st.isCanLike()) {
@@ -564,20 +645,18 @@ public class UserInteractionService {
     }
 
     private void enforceCanPerformNeutralAction(Long actorId, InteractionContext ctx) {
-        if (!ctx.enforceUserStateGate) return;
+        if (ctx != null && !ctx.enforceUserStateGate) return;
 
         User actor = getUserOrThrow(actorId);
         UserStateEvaluatorService.UserStateSummary st = userStateEvaluator.evaluateUserState(actor);
 
-        boolean liveWedding = ctx.liveWeddingRules || (ctx.mode == WeddingMode.WEDDING);
+        boolean liveWedding = isLiveWedding(ctx);
         if (liveWedding) {
-            if (!hasPrimaryPhoto(st)) {
-                throw new IllegalStateException("Primary photo is required");
-            }
+            if (!hasPrimaryPhoto(st)) throw new IllegalStateException("Primary photo is required");
             return;
         }
 
-        if (!st.isCanLike()) { // לפי ה-evaluator שלך: canLike = hasPhoto && !deletion
+        if (!st.isCanLike()) {
             throw new IllegalStateException("Action blocked: " + String.join(" | ", safeReasons(st)));
         }
     }
@@ -592,95 +671,100 @@ public class UserInteractionService {
     }
 
     // =====================================================
-    // ✅ Action repository helpers
+    // ✅ ActiveIndex (single DB hit, fast lookup)
     // =====================================================
 
-    private UserAction findActiveActionBetween(Long actorId, Long targetId, UserActionType type) {
-        if (actorId == null || targetId == null || type == null) return null;
+    private static class ActiveIndex {
+        private final Map<UserActionType, Map<Long, UserAction>> byTypeTarget = new EnumMap<>(UserActionType.class);
+
+        UserAction get(UserActionType type, Long targetId) {
+            if (type == null || targetId == null) return null;
+            Map<Long, UserAction> m = byTypeTarget.get(type);
+            if (m == null) return null;
+            UserAction ua = m.get(targetId);
+            return (ua != null && ua.isActive()) ? ua : null;
+        }
+
+        void put(UserAction ua) {
+            if (ua == null || !ua.isActive()) return;
+            if (ua.getActionType() == null) return;
+            if (ua.getTarget() == null || ua.getTarget().getId() == null) return;
+
+            byTypeTarget.computeIfAbsent(ua.getActionType(), k -> new LinkedHashMap<>())
+                    .putIfAbsent(ua.getTarget().getId(), ua);
+        }
+
+        void markInactive(UserActionType type, Long targetId) {
+            Map<Long, UserAction> m = byTypeTarget.get(type);
+            if (m != null) m.remove(targetId);
+        }
+
+        List<Long> targetsOfType(UserActionType type) {
+            Map<Long, UserAction> m = byTypeTarget.get(type);
+            if (m == null) return Collections.emptyList();
+            return new ArrayList<>(m.keySet());
+        }
+    }
+
+    private ActiveIndex loadActorActiveIndex(Long actorId) {
+        if (actorId == null) return new ActiveIndex();
 
         int maxScan = getIntSetting(K_MAX_SCAN_ACTIVE_ACTIONS, 2000);
         Pageable p = PageRequest.of(0, clamp(maxScan, 50, 5000));
 
-        // סריקה יעילה יחסית: פעולות פעילות של actor, מסונן בזיכרון
         List<UserAction> rows = actionRepo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p);
-        if (rows == null) return null;
+        ActiveIndex idx = new ActiveIndex();
 
+        if (rows == null) return idx;
         for (UserAction ua : rows) {
             if (ua == null || !ua.isActive()) continue;
-            if (ua.getActionType() != type) continue;
-            if (ua.getTarget() == null || ua.getTarget().getId() == null) continue;
-            if (Objects.equals(ua.getTarget().getId(), targetId)) return ua;
+            idx.put(ua);
         }
-        return null;
+        return idx;
     }
 
-    private boolean isMutualPositive(Long a, Long b) {
-        UserAction ab = findActiveActionBetween(a, b, UserActionType.LIKE);
+    private boolean isMutualLike(ActiveIndex actorIdx, ActiveIndex targetIdx, Long actorId, Long targetId) {
+        UserAction ab = actorIdx.get(UserActionType.LIKE, targetId);
         if (ab == null) return false;
-        UserAction ba = findActiveActionBetween(b, a, UserActionType.LIKE);
+
+        UserAction ba = targetIdx.get(UserActionType.LIKE, actorId);
         return ba != null;
     }
 
-    private void deactivateConflicts(Long actorId, Long targetId, UserActionType... types) {
-        if (types == null || types.length == 0) return;
+    private void deactivateIfExists(ActiveIndex idx, Long actorId, Long targetId, UserActionType... types) {
+        if (idx == null || types == null || types.length == 0) return;
+
         LocalDateTime now = LocalDateTime.now();
+        List<UserAction> toSave = new ArrayList<>();
 
         for (UserActionType t : types) {
-            UserAction act = findActiveActionBetween(actorId, targetId, t);
+            UserAction act = idx.get(t, targetId);
             if (act != null) {
                 act.setActive(false);
                 act.setUpdatedAt(now);
-                actionRepo.save(act);
+                toSave.add(act);
+                idx.markInactive(t, targetId);
             }
         }
+
+        if (!toSave.isEmpty()) actionRepo.saveAll(toSave);
     }
 
-    private void deactivateAllRelationshipActionsBothDirections(Long a, Long b) {
-        // מבטל LIKE/DISLIKE/FREEZE/BLOCK בשני כיוונים
+    private void deactivateRelationshipBothDirections(Long a, Long b, ActiveIndex aIdx, ActiveIndex bIdx) {
         UserActionType[] types = new UserActionType[] {
                 UserActionType.LIKE,
                 UserActionType.DISLIKE,
                 UserActionType.FREEZE,
                 UserActionType.BLOCK
         };
-        for (UserActionType t : types) {
-            UserAction ab = findActiveActionBetween(a, b, t);
-            if (ab != null) {
-                ab.setActive(false);
-                ab.setUpdatedAt(LocalDateTime.now());
-                actionRepo.save(ab);
-            }
-            UserAction ba = findActiveActionBetween(b, a, t);
-            if (ba != null) {
-                ba.setActive(false);
-                ba.setUpdatedAt(LocalDateTime.now());
-                actionRepo.save(ba);
-            }
-        }
+
+        deactivateIfExists(aIdx, a, b, types);
+        deactivateIfExists(bIdx, b, a, types);
     }
 
-    @Transactional(readOnly = true)
-    private List<Long> getTargetsByActiveType(Long actorId, UserActionType type, int limit) {
-        if (actorId == null || type == null) return Collections.emptyList();
-
-        int lim = clamp(limit, 1, 500);
-        Pageable p = PageRequest.of(0, Math.max(lim, 50));
-
-        List<UserAction> rows = actionRepo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p);
-        if (rows == null) return Collections.emptyList();
-
-        return rows.stream()
-                .filter(Objects::nonNull)
-                .filter(UserAction::isActive)
-                .filter(ua -> ua.getActionType() == type)
-                .map(UserAction::getTarget)
-                .filter(Objects::nonNull)
-                .map(User::getId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .limit(lim)
-                .collect(Collectors.toList());
-    }
+    // =====================================================
+    // ✅ Received lists helper
+    // =====================================================
 
     @Transactional(readOnly = true)
     private List<Long> getActorsByActiveTypeOnTarget(Long targetId, UserActionType type, int limit) {
@@ -689,15 +773,12 @@ public class UserInteractionService {
         int lim = clamp(limit, 1, 500);
         Pageable p = PageRequest.of(0, lim);
 
-        // ✅ מתודה שכן קיימת בריפו ששלחת
-        List<UserAction> rows =
-                actionRepo.findByTarget_IdAndActionTypeOrderByCreatedAtDesc(targetId, type, p);
-
+        List<UserAction> rows = actionRepo.findByTarget_IdAndActionTypeOrderByCreatedAtDesc(targetId, type, p);
         if (rows == null) return Collections.emptyList();
 
         return rows.stream()
                 .filter(Objects::nonNull)
-                .filter(UserAction::isActive)          // active=true (במקום activeTrue בריפו)
+                .filter(UserAction::isActive)
                 .map(UserAction::getActor)
                 .filter(Objects::nonNull)
                 .map(User::getId)
@@ -716,17 +797,13 @@ public class UserInteractionService {
         if (cap <= 0) throw new IllegalStateException("SuperLike disabled by settings");
 
         LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
-        int maxScan = getIntSetting(K_MAX_SCAN_ACTIVE_ACTIONS, 2000);
+        ActiveIndex idx = loadActorActiveIndex(actorId);
 
-        Pageable p = PageRequest.of(0, clamp(maxScan, 50, 5000));
-        List<UserAction> rows = actionRepo.findByActor_IdAndActiveTrueOrderByCreatedAtDesc(actorId, p);
-        if (rows == null) return;
-
-        long used = rows.stream()
+        long used = idx.targetsOfType(UserActionType.LIKE).stream()
+                .map(tid -> idx.get(UserActionType.LIKE, tid))
                 .filter(Objects::nonNull)
                 .filter(UserAction::isActive)
                 .filter(ua -> ua.getCreatedAt() != null && !ua.getCreatedAt().isBefore(startOfDay))
-                .filter(ua -> ua.getActionType() == UserActionType.LIKE)
                 .filter(this::isSuperLike)
                 .count();
 
@@ -743,53 +820,37 @@ public class UserInteractionService {
         return "true".equalsIgnoreCase(String.valueOf(v));
     }
 
-    private boolean isSuperLikeTarget(Long actorId, Long targetId) {
-        UserAction like = findActiveActionBetween(actorId, targetId, UserActionType.LIKE);
-        return like != null && isSuperLike(like);
-    }
-
     // =====================================================
-    // ✅ CreateActionCommand builder (reflection-safe)
+    // ✅ CreateActionCommand builder (no reflection)
     // =====================================================
 
     private UserActionService.CreateActionCommand baseCmd(Long actorId, Long targetId, InteractionContext ctx) {
         UserActionService.CreateActionCommand cmd = new UserActionService.CreateActionCommand();
+        cmd.actorUserId = actorId;
+        cmd.targetUserId = targetId;
 
-        // actor / target (תואם לכל naming style)
-        setIfExists(cmd, "actorId", actorId);
-        setIfExists(cmd, "actorUserId", actorId);
+        if (ctx != null) {
+            cmd.weddingId = ctx.weddingId;
+            cmd.originWeddingId = ctx.originWeddingId;
+            cmd.matchId = ctx.matchId;
+            cmd.actionGroupId = ctx.actionGroupId;
 
-        setIfExists(cmd, "targetId", targetId);
-        setIfExists(cmd, "targetUserId", targetId);
+            cmd.source = ctx.source;
+            cmd.ipAddress = ctx.ipAddress;
+            cmd.deviceInfo = ctx.deviceInfo;
 
-        // context ids
-        setIfExists(cmd, "weddingId", ctx.weddingId);
-        setIfExists(cmd, "originWeddingId", ctx.originWeddingId);
-        setIfExists(cmd, "matchId", ctx.matchId);
-        setIfExists(cmd, "actionGroupId", ctx.actionGroupId);
+            cmd.autoGenerated = (ctx.source != null && !"user".equalsIgnoreCase(ctx.source));
+        } else {
+            cmd.source = "user";
+            cmd.autoGenerated = false;
+        }
 
-        // telemetry
-        setIfExists(cmd, "source", ctx.source);
-        setIfExists(cmd, "ipAddress", ctx.ipAddress);
-        setIfExists(cmd, "deviceInfo", ctx.deviceInfo);
-
-        // common
-        setIfExists(cmd, "active", true);
-
+        cmd.active = true;
         return cmd;
     }
 
-    private void setIfExists(Object obj, String fieldName, Object value) {
-        if (obj == null || fieldName == null) return;
-        try {
-            Field f = obj.getClass().getDeclaredField(fieldName);
-            f.setAccessible(true);
-            f.set(obj, value);
-        } catch (Exception ignore) { }
-    }
-
     // =====================================================
-    // ✅ Metadata helpers
+    // ✅ Metadata helpers (same behavior)
     // =====================================================
 
     private String buildMetadata(InteractionContext ctx, String event, Map<String, String> extra) {
@@ -804,12 +865,10 @@ public class UserInteractionService {
             if (ctx.source != null) m.put("source", ctx.source);
         }
         if (extra != null) m.putAll(extra);
-
         return toJsonLike(m);
     }
 
     private String toJsonLike(Map<String, String> m) {
-        // לא תלוי ב-ObjectMapper, אבל עדיין "כמו JSON"
         StringBuilder sb = new StringBuilder();
         sb.append("{");
         boolean first = true;
@@ -829,7 +888,6 @@ public class UserInteractionService {
         if (metadata == null) return out;
 
         String s = metadata.trim();
-        // naive JSON-ish parse: "k":"v"
         if (s.startsWith("{") && s.endsWith("}")) {
             s = s.substring(1, s.length() - 1).trim();
             if (s.isEmpty()) return out;
@@ -845,7 +903,6 @@ public class UserInteractionService {
             return out;
         }
 
-        // fallback: k=v;k=v
         String[] parts = s.split(";");
         for (String p : parts) {
             String[] kv = p.split("=", 2);
@@ -888,8 +945,6 @@ public class UserInteractionService {
     private int getIntSetting(String key, int def) {
         try {
             if (key == null || key.isBlank()) return def;
-
-            // משתמשים ב-API הרשמי של SystemSettingsService
             return settings.getEffectiveInt(
                     settings.resolveEnv(),
                     SystemSettingsService.Scope.SYSTEM,

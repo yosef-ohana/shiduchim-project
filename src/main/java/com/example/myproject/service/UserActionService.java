@@ -28,10 +28,6 @@ import java.util.stream.Collectors;
 @Transactional
 public class UserActionService {
 
-    // =====================================================
-    // ✅ Settings keys (SystemSettings)
-    // =====================================================
-
     private static final String K_AUDIT_ENABLED = "userAction.audit.enabled";
 
     private static final String K_RATE_MIN_SECONDS = "userAction.rate.minSeconds";                 // default 2
@@ -43,20 +39,12 @@ public class UserActionService {
 
     private static final String K_HEAVY_ACTION_TYPES = "userAction.rate.heavyActionTypes";         // CSV
 
-    // Anti-spam monitor (signal בלבד)
     private static final String K_MONITOR_ENABLED = "userAction.monitor.enabled";                  // default true
     private static final String K_MONITOR_WINDOW_SECONDS = "userAction.monitor.windowSeconds";     // default 180
     private static final String K_MONITOR_THRESHOLD = "userAction.monitor.threshold";              // default 30
 
-    // ✅ System actor
     private static final String K_SYSTEM_ACTOR_USER_ID = "userAction.systemActorUserId";           // required
-
-    // ✅ Safety max page size
     private static final String K_MAX_PAGE_SIZE = "userAction.query.maxPageSize";                  // default 200
-
-    // =====================================================
-    // ✅ Dependencies
-    // =====================================================
 
     private final UserActionRepository repo;
     private final UserRepository userRepo;
@@ -64,7 +52,6 @@ public class UserActionService {
     private final SystemLogService systemLogService;
     private final UserStateEvaluatorService userStateEvaluator;
 
-    // ActionGroupId generator
     private final long nodeSalt = ThreadLocalRandom.current().nextLong(100_000L, 999_999L);
     private final AtomicInteger groupSeq = new AtomicInteger(0);
 
@@ -79,10 +66,6 @@ public class UserActionService {
         this.systemLogService = systemLogService;
         this.userStateEvaluator = userStateEvaluator;
     }
-
-    // =====================================================
-    // ✅ Command DTO
-    // =====================================================
 
     public static class CreateActionCommand {
         public Long actorUserId;
@@ -113,7 +96,6 @@ public class UserActionService {
         public boolean requireCanLike = false;
         public boolean requireCanSendMessage = false;
 
-        // Audit (optional)
         public SystemActionType auditActionType;
         public SystemModule auditModule;
         public SystemSeverityLevel auditSeverity = SystemSeverityLevel.INFO;
@@ -141,10 +123,6 @@ public class UserActionService {
         public int getBlockedByRateOrState() { return blockedByRateOrState; }
     }
 
-    // =====================================================
-    // ✅ Core API
-    // =====================================================
-
     public UserAction record(CreateActionCommand cmd) {
         Objects.requireNonNull(cmd, "cmd is null");
         validateCmd(cmd);
@@ -152,14 +130,11 @@ public class UserActionService {
         User actor = getUserOrThrow(cmd.actorUserId);
         User target = (cmd.targetUserId == null) ? null : getUserOrThrow(cmd.targetUserId);
 
-        // Gate לפי UserStateEvaluator
         enforceUserState(cmd, actor);
 
-        // Rate-limit / cooldown
         if (cmd.enforceRateLimit) enforceRateLimitAnyAction(cmd.actorUserId, cmd.actionType);
         if (cmd.enforceCooldownSameType) enforceCooldownSameType(cmd.actorUserId, cmd.actionType);
 
-        // Idempotency (dup window + context)
         if (cmd.preventDuplicates) {
             UserAction dup = findRecentDuplicate(cmd);
             if (dup != null) {
@@ -279,10 +254,6 @@ public class UserActionService {
         return new BatchResult(commands.size(), created, dup, blocked);
     }
 
-    // =====================================================
-    // ✅ Convenience wrappers
-    // =====================================================
-
     public UserAction recordUserAction(Long actorId,
                                        Long targetId,
                                        UserActionType type,
@@ -367,12 +338,9 @@ public class UserActionService {
     public List<UserAction> getByActorAndType(Long actorId, UserActionType type, boolean activeOnly, int limit) {
         if (actorId == null || type == null) return Collections.emptyList();
         Pageable p = page(limit);
-
-        List<UserAction> rows = activeOnly
-                ? repo.findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(actorId, type)
+        return activeOnly
+                ? repo.findByActor_IdAndActionTypeAndActiveTrueOrderByCreatedAtDesc(actorId, type, p)
                 : repo.findByActor_IdAndActionTypeOrderByCreatedAtDesc(actorId, type, p);
-
-        return activeOnly ? limit(rows, limit) : rows;
     }
 
     @Transactional(readOnly = true)
@@ -579,9 +547,9 @@ public class UserActionService {
         if (recent != null && recent.size() >= threshold) {
             try {
                 systemLogService.logTrace(
-                        SystemActionType.SECURITY_SUSPICIOUS_MATCH_ACTIVITY, // ✅ קיים אצלך
-                        SystemModule.USER_ACTION_SERVICE,                    // ✅ קיים אצלך
-                        SystemSeverityLevel.WARNING,                         // ✅ קיים אצלך
+                        SystemActionType.SECURITY_SUSPICIOUS_MATCH_ACTIVITY,
+                        SystemModule.USER_ACTION_SERVICE,
+                        SystemSeverityLevel.WARNING,
                         true,
                         actorId,
                         null,
@@ -594,10 +562,6 @@ public class UserActionService {
             } catch (Exception ignore) {}
         }
     }
-
-    // =====================================================
-    // 🧾 Audit (optional)
-    // =====================================================
 
     private void auditIfNeeded(CreateActionCommand cmd, Long actorUserId, String details) {
         boolean enabled = getBooleanSetting(K_AUDIT_ENABLED, true);
@@ -621,20 +585,17 @@ public class UserActionService {
         } catch (Exception ignore) {}
     }
 
-    // =====================================================
-    // 🔧 Gate / Validation / Helpers
-    // =====================================================
-
     private void enforceUserState(CreateActionCommand cmd, User actor) {
         if (!(cmd.requireCanLike || cmd.requireCanSendMessage)) return;
 
         UserStateEvaluatorService.UserStateSummary st = userStateEvaluator.evaluateUserState(actor);
+        List<String> reasons = (st != null && st.getReasonsBlocked() != null) ? st.getReasonsBlocked() : List.of();
 
-        if (cmd.requireCanLike && !st.isCanLike()) {
-            throw new IllegalStateException("User cannot like: " + String.join(" | ", st.getReasonsBlocked()));
+        if (cmd.requireCanLike && (st == null || !st.isCanLike())) {
+            throw new IllegalStateException("User cannot like: " + String.join(" | ", reasons));
         }
-        if (cmd.requireCanSendMessage && !st.isCanSendMessage()) {
-            throw new IllegalStateException("User cannot send message: " + String.join(" | ", st.getReasonsBlocked()));
+        if (cmd.requireCanSendMessage && (st == null || !st.isCanSendMessage())) {
+            throw new IllegalStateException("User cannot send message: " + String.join(" | ", reasons));
         }
     }
 
@@ -663,7 +624,6 @@ public class UserActionService {
     }
 
     private Long requireSystemActorUserId() {
-        // ✅ אין getEffectiveLongOrDefault אצלך -> מביאים String ומפרסרים
         String raw = settings.getEffectiveStringOrDefault(
                 settings.resolveEnv(),
                 SystemSettingsService.Scope.SYSTEM,
@@ -684,8 +644,6 @@ public class UserActionService {
     }
 
     private int getIntSetting(String key, int def) {
-        // אם יש אצלך getEffectiveInt — אפשר להחזיר אליו.
-        // אבל כדי להיות 100% תואם: נביא String ונפרסר.
         String raw = settings.getEffectiveStringOrDefault(
                 settings.resolveEnv(),
                 SystemSettingsService.Scope.SYSTEM,
