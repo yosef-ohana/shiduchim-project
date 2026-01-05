@@ -20,8 +20,8 @@ spring:
 
   servlet:
     multipart:
-      max-file-size: 10MB
-      max-request-size: 15MB
+      max-file-size: 8MB
+      max-request-size: 12MB
 
 server:
   port: 8080
@@ -31,7 +31,13 @@ logging:
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
 
+# ✅ סעיף 10 — anti-spam cooldown configurable
+shiduchim:
+  chat:
+    antiSpamCooldownSeconds: 2
+
+# ✅ אל תשמור סודות בקוד
 cloudinary:
-  cloud-name: dafwlnaw5
-  api-key: 197298472131277
-  api-secret: yRqM2w_dZLc0-N8oPtrTQrfflm4
+  cloud-name: ${CLOUDINARY_CLOUD_NAME}
+  api-key: ${CLOUDINARY_API_KEY}
+  api-secret: ${CLOUDINARY_API_SECRET}
