@@ -16,8 +16,11 @@ import java.util.List;
         indexes = {
                 @Index(name = "idx_users_phone", columnList = "phone", unique = true),
                 @Index(name = "idx_users_email", columnList = "email", unique = true),
-                @Index(name = "idx_users_lastWeddingId", columnList = "lastWeddingId"),
-                @Index(name = "idx_users_globalPool", columnList = "inGlobalPool, globalAccessApproved"),
+
+                // ✅ FIX: snake_case in columnList
+                @Index(name = "idx_users_lastWeddingId", columnList = "last_wedding_id"),
+                @Index(name = "idx_users_globalPool", columnList = "in_global_pool, global_access_approved"),
+
                 @Index(name = "idx_users_backgroundMode", columnList = "background_mode")
         }
 )
@@ -206,6 +209,11 @@ public class User {
     @Column(name = "invited_by_user_id")
     private Long invitedByUserId;
 
+    // =====================================================
+    // 🔵 Heartbeat / Last seen (🧨 חובה לפי SSOT)
+    // =====================================================
+    @Column(name = "last_seen")
+    private LocalDateTime lastSeen;
 
     // =====================================================
     // 🔵 התראות
@@ -1019,7 +1027,14 @@ public class User {
         this.invitedByUserId = invitedByUserId;
     }
 
+    // ✅ Added getter/setter for lastSeen (ONLY)
+    public LocalDateTime getLastSeen() {
+        return lastSeen;
+    }
 
+    public void setLastSeen(LocalDateTime lastSeen) {
+        this.lastSeen = lastSeen;
+    }
 
     // =====================================================
     // 🔵 Helpers

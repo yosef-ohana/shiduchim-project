@@ -8,9 +8,18 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 @Service
 public class ImageStorageService {
+
+    private static final long MAX_BYTES = 8L * 1024 * 1024; // ✅ 8MB
+    private static final Set<String> ALLOWED_IMAGE_TYPES = Set.of(
+            "image/jpeg",
+            "image/jpg",
+            "image/png",
+            "image/webp"
+    );
 
     public static class UploadResult {
         private final String secureUrl;
@@ -45,10 +54,16 @@ public class ImageStorageService {
             throw new IllegalArgumentException("File must not be empty");
         }
 
-        // בסיסי: רק תמונות (אפשר להרחיב ל-PDF בהמשך אם תרצה)
+        // ✅ 8MB enforcement
+        if (file.getSize() > MAX_BYTES) {
+            throw new IllegalArgumentException("FILE_TOO_LARGE");
+        }
+
+        // ✅ allow-list of image types (לא כל image/*)
         String contentType = file.getContentType();
-        if (contentType == null || !contentType.toLowerCase().startsWith("image/")) {
-            throw new IllegalArgumentException("Only image/* content types are allowed");
+        String ct = (contentType == null) ? null : contentType.toLowerCase();
+        if (ct == null || !ALLOWED_IMAGE_TYPES.contains(ct)) {
+            throw new IllegalArgumentException("Only JPEG/PNG/WEBP content types are allowed");
         }
 
         try {

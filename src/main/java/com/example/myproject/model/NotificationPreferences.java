@@ -8,9 +8,9 @@ import java.time.LocalDateTime;
         name = "notification_preferences",
         indexes = {
                 @Index(name = "idx_np_user", columnList = "user_id"),
-                @Index(name = "idx_np_mute_all", columnList = "muteAll"),
-                @Index(name = "idx_np_mute_until", columnList = "muteUntil"),
-                @Index(name = "idx_np_updated_at", columnList = "updatedAt") // ✅ תואם לריפו שלך
+                @Index(name = "idx_np_mute_all", columnList = "mute_all"),     // ✅ FIX
+                @Index(name = "idx_np_mute_until", columnList = "mute_until"), // ✅ FIX
+                @Index(name = "idx_np_updated_at", columnList = "updated_at")  // ✅ FIX
         }
 )
 public class NotificationPreferences {

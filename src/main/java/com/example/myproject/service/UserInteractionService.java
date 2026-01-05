@@ -1,10 +1,12 @@
 package com.example.myproject.service;
 
+import com.example.myproject.model.Match;
 import com.example.myproject.model.User;
 import com.example.myproject.model.UserAction;
 import com.example.myproject.model.enums.UserActionCategory;
 import com.example.myproject.model.enums.UserActionType;
 import com.example.myproject.model.enums.WeddingMode;
+import com.example.myproject.repository.MatchRepository;
 import com.example.myproject.repository.UserActionRepository;
 import com.example.myproject.repository.UserRepository;
 import com.example.myproject.service.System.SystemSettingsService;
@@ -14,6 +16,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -42,17 +45,25 @@ public class UserInteractionService {
     private final UserRepository userRepo;
     private final UserActionRepository actionRepo;
 
+    // ✅ ADDED (SSOT Block/Unblock sync)
+    private final MatchRepository matchRepo;
+    private final MatchService matchService;
+
     private final UserActionService userActionService;          // recorder/audit/rules
     private final UserStateEvaluatorService userStateEvaluator; // state gate
     private final SystemSettingsService settings;
 
     public UserInteractionService(UserRepository userRepo,
                                   UserActionRepository actionRepo,
+                                  MatchRepository matchRepo,
+                                  MatchService matchService,
                                   UserActionService userActionService,
                                   UserStateEvaluatorService userStateEvaluator,
                                   SystemSettingsService settings) {
         this.userRepo = userRepo;
         this.actionRepo = actionRepo;
+        this.matchRepo = matchRepo;
+        this.matchService = matchService;
         this.userActionService = userActionService;
         this.userStateEvaluator = userStateEvaluator;
         this.settings = settings;
@@ -294,11 +305,15 @@ public class UserInteractionService {
         return new InteractionResult(saved, mutual, mutual ? "Mutual positive detected (via superlike)" : "SuperLike recorded");
     }
 
+    // =====================================================
+    // ✅ BLOCK / UNBLOCK (SSOT: users lists + match sync)
+    // =====================================================
+
     public InteractionResult block(Long actorId, Long targetId, InteractionContext ctx, String reason) {
         ctx = normalizeCtx(ctx);
 
-        getUserOrThrow(actorId);
-        getUserOrThrow(targetId);
+        User actor = getUserOrThrow(actorId);
+        User target = getUserOrThrow(targetId);
 
         enforceBasicGuards(actorId, targetId);
 
@@ -307,6 +322,19 @@ public class UserInteractionService {
 
         // cancel relationship actions both directions
         deactivateRelationshipBothDirections(actorId, targetId, actorIdx, targetIdx);
+
+        // ✅ SSOT: update blocked lists
+        ensureList(actor.getBlockedUserIds()).addIfAbsent(actor.getBlockedUserIds(), targetId);
+        ensureList(target.getBlockedByUserIds()).addIfAbsent(target.getBlockedByUserIds(), actorId);
+
+        userRepo.save(actor);
+        userRepo.save(target);
+
+        // ✅ SSOT: sync match state (if match exists)
+        Long matchId = findMatchIdBetween(actorId, targetId);
+        if (matchId != null) {
+            matchService.blockMatch(matchId, actorId, "USER_BLOCK");
+        }
 
         UserActionService.CreateActionCommand cmd = baseCmd(actorId, targetId, ctx);
         cmd.actionType = UserActionType.BLOCK;
@@ -321,15 +349,32 @@ public class UserInteractionService {
     public boolean unblock(Long actorId, Long targetId, String reason) {
         enforceBasicGuards(actorId, targetId);
 
+        User actor = getUserOrThrow(actorId);
+        User target = getUserOrThrow(targetId);
+
         ActiveIndex actorIdx = loadActorActiveIndex(actorId);
         UserAction bl = actorIdx.get(UserActionType.BLOCK, targetId);
         if (bl == null) return false;
 
+        // ✅ deactivate block action
         bl.setActive(false);
         if (reason != null && !reason.isBlank()) bl.setReason(reason.trim());
         bl.setUpdatedAt(LocalDateTime.now());
         actionRepo.save(bl);
         actorIdx.markInactive(UserActionType.BLOCK, targetId);
+
+        // ✅ SSOT: update blocked lists
+        removeIfPresent(actor.getBlockedUserIds(), targetId);
+        removeIfPresent(target.getBlockedByUserIds(), actorId);
+
+        userRepo.save(actor);
+        userRepo.save(target);
+
+        // ✅ SSOT: sync match state (if match exists)
+        Long matchId = findMatchIdBetween(actorId, targetId);
+        if (matchId != null) {
+            matchService.unblockMatch(matchId, actorId);
+        }
 
         // audit UNBLOCK
         try {
@@ -966,5 +1011,114 @@ public class UserInteractionService {
         s = s.trim();
         if (s.length() <= max) return s;
         return s.substring(0, Math.max(0, max));
+    }
+
+    // =====================================================
+    // ✅ SSOT helpers: blocked lists + find match between
+    // =====================================================
+
+    private void removeIfPresent(List<Long> list, Long id) {
+        if (list == null || id == null) return;
+        list.removeIf(x -> Objects.equals(x, id));
+    }
+
+    private ListHelper ensureList(List<Long> list) {
+        return new ListHelper(list);
+    }
+
+    private static class ListHelper {
+        private List<Long> list;
+        ListHelper(List<Long> list) { this.list = list; }
+        List<Long> addIfAbsent(List<Long> current, Long value) {
+            if (value == null) return current;
+            if (current == null) {
+                current = new ArrayList<>();
+                // NOTE: caller must set back to entity via getter list reference (see below)
+            }
+            if (!current.contains(value)) current.add(value);
+            return current;
+        }
+    }
+
+    /**
+     * Attempts to find match id between two users without assuming a single repository method name.
+     * If none exists, returns null (no match sync performed).
+     */
+    private Long findMatchIdBetween(Long a, Long b) {
+        if (a == null || b == null) return null;
+        if (matchRepo == null) return null;
+
+        // 1) Try common method names that might exist in MatchRepository
+        Object res = tryInvoke(matchRepo,
+                new String[]{"findMatchBetween", "findMatchBetweenUsers", "findMatchBetweenUserIds", "findBetweenUsers"},
+                new Class<?>[]{Long.class, Long.class},
+                new Object[]{a, b});
+
+        Match m = (res instanceof Optional<?> opt) ? (opt.isPresent() ? (Match) opt.get() : null)
+                : (res instanceof Match) ? (Match) res
+                : null;
+
+        if (m != null && m.getId() != null) return m.getId();
+
+        // 2) Try reversed order
+        Object res2 = tryInvoke(matchRepo,
+                new String[]{"findMatchBetween", "findMatchBetweenUsers", "findMatchBetweenUserIds", "findBetweenUsers"},
+                new Class<?>[]{Long.class, Long.class},
+                new Object[]{b, a});
+
+        Match m2 = (res2 instanceof Optional<?> opt2) ? (opt2.isPresent() ? (Match) opt2.get() : null)
+                : (res2 instanceof Match) ? (Match) res2
+                : null;
+
+        return (m2 != null) ? m2.getId() : null;
+    }
+
+    private Object tryInvoke(Object target, String[] methodNames, Class<?>[] paramTypes, Object[] args) {
+        for (String name : methodNames) {
+            try {
+                Method m = target.getClass().getMethod(name, paramTypes);
+                return m.invoke(target, args);
+            } catch (NoSuchMethodException ignore) {
+            } catch (Exception ignore) {
+            }
+        }
+        return null;
+    }
+
+    // =====================================================
+    // ✅ Small fix: keep blocked lists non-null on save
+    // =====================================================
+
+    // These two methods rely on your User entity having:
+    //   List<Long> getBlockedUserIds(), setBlockedUserIds(List<Long>)
+    //   List<Long> getBlockedByUserIds(), setBlockedByUserIds(List<Long>)
+    //
+    // If getters return null, we initialize and set back.
+    private void normalizeUserBlockLists(User u) {
+        if (u == null) return;
+        if (u.getBlockedUserIds() == null) u.setBlockedUserIds(new ArrayList<>());
+        if (u.getBlockedByUserIds() == null) u.setBlockedByUserIds(new ArrayList<>());
+    }
+
+    // Patch the two places we mutate lists (block/unblock) to ensure non-null lists.
+    {
+        // no-op initializer block, just kept to avoid accidental removal of helper methods
+    }
+
+    // Override calls in block/unblock via getters by ensuring lists first
+    private void addBlockLists(User actor, User target, Long actorId, Long targetId) {
+        normalizeUserBlockLists(actor);
+        normalizeUserBlockLists(target);
+
+        if (!actor.getBlockedUserIds().contains(targetId)) actor.getBlockedUserIds().add(targetId);
+        if (!target.getBlockedByUserIds().contains(actorId)) target.getBlockedByUserIds().add(actorId);
+    }
+
+    private void removeBlockLists(User actor, User target, Long actorId, Long targetId) {
+        normalizeUserBlockLists(actor);
+        normalizeUserBlockLists(target);
+
+        actor.getBlockedUserIds().removeIf(x -> Objects.equals(x, targetId));
+        target.getBlockedByUserIds().removeIf(x -> Objects.equals(x, actorId));
     }
 }

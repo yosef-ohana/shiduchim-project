@@ -114,7 +114,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByFirstWeddingId(Long weddingId);
 
-    List<User> findByWeddingsHistoryContains(Long weddingId);
+    // ✅ FIX: Contains -> Containing
+    List<User> findByWeddingsHistoryContaining(Long weddingId);
 
     List<User> findByActiveWeddingIdOrLastWeddingId(Long activeWeddingId, Long lastWeddingId);
 
@@ -148,9 +149,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     List<User> findByDeletionRequestedTrue();
 
-    // חסימות
-    List<User> findByBlockedUserIdsContains(Long targetUserId);
-    List<User> findByBlockedByUserIdsContains(Long actorUserId);
+    // ✅ FIX: Contains -> Containing
+    List<User> findByBlockedUserIdsContaining(Long targetUserId);
+    List<User> findByBlockedByUserIdsContaining(Long actorUserId);
 
 
     // ============================================================
@@ -218,18 +219,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     // 🔵 14. Heartbeat (ability 40)
     // ============================================================
 
+    // ✅ FIX: Heartbeat uses lastSeen (entity now has lastSeen)
     List<User> findByLastSeenBefore(LocalDateTime cutoff);
     List<User> findByLastSeenBetween(LocalDateTime start, LocalDateTime end);
-
-    // ============================================================
-// 🔵 14. Heartbeat (ability 40)
-// ============================================================
-
-// ❌ היה:
-// List<User> findByLastSeenBefore(LocalDateTime cutoff);
-// List<User> findByLastSeenBetween(LocalDateTime start, LocalDateTime end);
-
-    // ✅ מתוקן לפי ה-Entity שלך:
-    List<User> findByUpdatedAtBefore(LocalDateTime cutoff);
-    List<User> findByUpdatedAtBetween(LocalDateTime start, LocalDateTime end);
 }

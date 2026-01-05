@@ -1,10 +1,3 @@
-// =====================================================
-// ✅ UserAuthService (MASTER 2025 - FINAL OPTIMAL)
-// - Gate logging (Capability #1) בלי לזהם LoginAttempt metrics
-// - אין יותר -1 ב-failuresInWindow
-// - OTP fail מחזיר otpFailuresInWindow אמיתי
-// - עדיין לא חושף אם משתמש קיים/לא קיים/לא verified
-// =====================================================
 package com.example.myproject.service.User;
 
 import com.example.myproject.model.User;
@@ -214,10 +207,10 @@ public class UserAuthService {
         return res.user != null ? Optional.of(res.user) : Optional.empty();
     }
 
-    // Heartbeat (כרגע על updatedAt)
+    // ✅ Heartbeat (SSOT): update only lastSeen (not updatedAt)
     public void updateUserHeartbeat(Long userId) {
         User user = getUserOrThrow(userId);
-        user.setUpdatedAt(LocalDateTime.now());
+        user.setLastSeen(LocalDateTime.now());
         userRepository.save(user);
     }
 

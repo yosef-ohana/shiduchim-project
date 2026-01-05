@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.ArrayList;
 
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> {
@@ -49,12 +50,21 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
     List<ChatMessage> findBySender_IdAndRecipient_IdOrderByCreatedAtAsc(Long senderId, Long recipientId);
     List<ChatMessage> findByRecipient_IdAndSender_IdOrderByCreatedAtAsc(Long recipientId, Long senderId);
 
+    // ✅ FIX (Section 11): filter deleted=false also in default conversation helper
     default List<ChatMessage> findConversation(Long userA, Long userB) {
         List<ChatMessage> a = findBySender_IdAndRecipient_IdOrderByCreatedAtAsc(userA, userB);
         List<ChatMessage> b = findByRecipient_IdAndSender_IdOrderByCreatedAtAsc(userA, userB);
         a.addAll(b);
-        a.sort(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())));
-        return a;
+
+        List<ChatMessage> out = new ArrayList<>();
+        for (ChatMessage cm : a) {
+            if (cm == null) continue;
+            if (Boolean.TRUE.equals(cm.isDeleted())) continue;
+            out.add(cm);
+        }
+
+        out.sort(Comparator.comparing(ChatMessage::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder())));
+        return out;
     }
 
     // ============================================================

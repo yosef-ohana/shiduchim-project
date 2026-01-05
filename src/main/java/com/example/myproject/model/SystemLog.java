@@ -18,10 +18,10 @@ import java.time.LocalDateTime;
         indexes = {
                 @Index(name = "idx_log_timestamp", columnList = "timestamp"),
                 @Index(name = "idx_log_user_id", columnList = "user_id"),
-                @Index(name = "idx_log_action_type", columnList = "actionType"),
+                @Index(name = "idx_log_action_type", columnList = "action_type"), // ✅ FIX
                 @Index(name = "idx_log_severity", columnList = "severity"),
                 @Index(name = "idx_log_module", columnList = "module"),
-                @Index(name = "idx_log_related_entity", columnList = "relatedEntityType, relatedEntityId")
+                @Index(name = "idx_log_related_entity", columnList = "related_entity_type, related_entity_id") // ✅ FIX
         }
 )
 public class SystemLog {

@@ -11,6 +11,7 @@ import com.example.myproject.model.enums.ChatMessageType;
 import com.example.myproject.repository.ChatMessageRepository;
 import com.example.myproject.repository.UserRepository;
 import com.example.myproject.repository.WeddingRepository;
+import com.example.myproject.service.System.SystemSettingsService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,6 +27,9 @@ public class ChatMessageService {
     private static final String OPENING_REJECTED_PREFIX = "[OPENING_REJECTED]";
     private static final int DEFAULT_ANTI_SPAM_COOLDOWN_SECONDS = 2;
 
+    // ✅ NEW (SSOT): pull cooldown from SystemSettings (fallback=2)
+    private static final String K_CHAT_MESSAGE_COOLDOWN_SECONDS = "chat.message.cooldownSeconds";
+
     // נקודת זמן "מוקדמת מאוד" כדי להחזיר "הכל" בשאילתות after()
     private static final LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
 
@@ -34,14 +38,19 @@ public class ChatMessageService {
     private final WeddingRepository weddingRepository;
     private final MatchService matchService;
 
+    // ✅ NEW dependency (SSOT)
+    private final SystemSettingsService settings;
+
     public ChatMessageService(ChatMessageRepository chatMessageRepository,
                               UserRepository userRepository,
                               WeddingRepository weddingRepository,
-                              MatchService matchService) {
+                              MatchService matchService,
+                              SystemSettingsService settings) {
         this.chatMessageRepository = chatMessageRepository;
         this.userRepository = userRepository;
         this.weddingRepository = weddingRepository;
         this.matchService = matchService;
+        this.settings = settings;
     }
 
     // ============================================================
@@ -57,7 +66,7 @@ public class ChatMessageService {
         validateNotBlocked(match);
 
         matchService.validateOpeningMessageAllowed(matchId, senderUserId);
-        matchService.validateNotSpam(matchId, DEFAULT_ANTI_SPAM_COOLDOWN_SECONDS);
+        matchService.validateNotSpam(matchId, resolveAntiSpamCooldownSeconds()); // ✅ FIX
 
         Long recipientId = resolveOtherUserId(match, senderUserId);
 
@@ -162,7 +171,7 @@ public class ChatMessageService {
             throw new IllegalStateException("Only one pre-decision reply is allowed.");
         }
 
-        matchService.validateNotSpam(matchId, DEFAULT_ANTI_SPAM_COOLDOWN_SECONDS);
+        matchService.validateNotSpam(matchId, resolveAntiSpamCooldownSeconds()); // ✅ FIX
 
         ChatMessage msg = buildMessage(
                 match,
@@ -191,7 +200,7 @@ public class ChatMessageService {
         validateNotBlocked(match);
 
         validateChatAllowed(matchId, senderUserId);
-        matchService.validateNotSpam(matchId, DEFAULT_ANTI_SPAM_COOLDOWN_SECONDS);
+        matchService.validateNotSpam(matchId, resolveAntiSpamCooldownSeconds()); // ✅ FIX
 
         Long recipientId = resolveOtherUserId(match, senderUserId);
 
@@ -594,9 +603,6 @@ public class ChatMessageService {
         if (state == OpeningState.PENDING) {
             ChatMessage opening = getOpeningMessageOrThrow(matchId);
 
-            // אם השולח הוא הנמען של ה-opening:
-            // - reply אחד מותר רק דרך sendOnePreDecisionReply()
-            // - הודעה נוספת (כלומר ניסיון sendMessage אחרי שכבר היה reply) → צריך popup+approve
             if (opening.getRecipient() != null && opening.getRecipient().getId().equals(senderUserId)) {
 
                 boolean alreadyReplied = chatMessageRepository
@@ -604,12 +610,10 @@ public class ChatMessageService {
                                 matchId, senderUserId, opening.getCreatedAt()
                         );
 
-                // ✅ זה הטריגר שה-UI צריך כדי להציג את האזהרה שלך
                 if (alreadyReplied) {
                     throw new IllegalStateException("SECOND_MESSAGE_REQUIRES_OPENING_APPROVAL");
                 }
 
-                // עדיין לא היה reply → צריך להשתמש ב-sendOnePreDecisionReply (כדי לשמור “reply אחד בלבד”)
                 throw new IllegalStateException("PRE_DECISION_REPLY_ONLY");
             }
         }
@@ -756,5 +760,28 @@ public class ChatMessageService {
         if (a != null) out.addAll(a);
         if (b != null) out.addAll(b);
         return out;
+    }
+
+    // ============================================================
+    // ✅ FIX (Section 10): cooldown from SystemSettings (fallback=2)
+    // ============================================================
+
+    private int resolveAntiSpamCooldownSeconds() {
+        return getIntSetting(K_CHAT_MESSAGE_COOLDOWN_SECONDS, DEFAULT_ANTI_SPAM_COOLDOWN_SECONDS);
+    }
+
+    private int getIntSetting(String key, int def) {
+        try {
+            if (key == null || key.isBlank()) return def;
+            return settings.getEffectiveInt(
+                    settings.resolveEnv(),
+                    SystemSettingsService.Scope.SYSTEM,
+                    null,
+                    key.trim(),
+                    def
+            );
+        } catch (Exception ignore) {
+            return def;
+        }
     }
 }

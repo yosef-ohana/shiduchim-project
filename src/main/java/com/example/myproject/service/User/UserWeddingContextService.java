@@ -148,7 +148,7 @@ public class UserWeddingContextService {
     }
 
     public List<User> findUsersByWeddingHistory(Long weddingId) {
-        return userRepository.findByWeddingsHistoryContains(weddingId);
+        return userRepository.findByWeddingsHistoryContaining(weddingId);
     }
 
     // =====================================================
