@@ -618,6 +618,7 @@ public class UserPhotoService {
         );
 
         publish(new UserPhotoChangedEvent(userId, null, ChangeType.REORDERED, Map.of("count", String.valueOf(finalOrder.size()))));
+        touchProfileUpdated(userId);
     }
 
     @Transactional
@@ -1090,7 +1091,22 @@ public class UserPhotoService {
 
             userRepository.save(u);
         } catch (Exception ignored) {}
+        touchProfileUpdated(userId);
+
     }
+
+    // =====================================================
+    // ✅ Touch user profile updated timestamp (MASTER-ONE)
+    // =====================================================
+    private void touchProfileUpdated(Long userId) {
+        if (userId == null) return;
+
+        userRepository.findById(userId).ifPresent(u -> {
+            u.setLastProfileUpdateAt(LocalDateTime.now());
+            userRepository.save(u);
+        });
+    }
+
 
     private Method findSetter(Class<?> clazz, String name, Class<?> param) {
         try { return clazz.getMethod(name, param); } catch (Exception e) { return null; }

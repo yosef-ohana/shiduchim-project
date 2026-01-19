@@ -61,4 +61,8 @@ public interface WeddingParticipantRepository extends JpaRepository<WeddingParti
             Long userId,
             Collection<WeddingParticipantRole> roles
     );
+
+    // ✅ DB-side delete for hard delete wedding
+    long deleteByWedding_Id(Long weddingId);
+
 }

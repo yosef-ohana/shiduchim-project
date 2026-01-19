@@ -5,6 +5,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.data.domain.Pageable;
+
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -214,4 +216,36 @@ public interface SystemConfigRepository extends JpaRepository<SystemConfig, Long
            order by c.createdAt desc
            """)
     List<SystemConfig> findGlobalActiveInJsonOrderByCreatedAtDesc();
+
+
+    // =====================================================
+    // ✅ 10) History by "updatedBy" inside jsonConfig (DB-side)
+    // =====================================================
+
+    @Query("""
+           select c from SystemConfig c
+           where c.jsonConfig is not null
+             and c.jsonConfig like concat('%\"updatedBy\":\"', :updatedBy, '\"%')
+           order by c.updatedAt desc
+           """)
+    List<SystemConfig> findByUpdatedByInJsonOrderByUpdatedAtDesc(
+            @Param("updatedBy") String updatedBy,
+            Pageable pageable
+    );
+
+    @Query("""
+           select c from SystemConfig c
+           where c.updatedAt >= :since
+             and c.jsonConfig is not null
+             and c.jsonConfig like concat('%\"updatedBy\":\"', :updatedBy, '\"%')
+           order by c.updatedAt desc
+           """)
+    List<SystemConfig> findByUpdatedByInJsonAndUpdatedAtAfterOrderByUpdatedAtDesc(
+            @Param("updatedBy") String updatedBy,
+            @Param("since") LocalDateTime since,
+            Pageable pageable
+    );
+
+    long deleteByCreatedAtBefore(LocalDateTime cutoff);
+
 }

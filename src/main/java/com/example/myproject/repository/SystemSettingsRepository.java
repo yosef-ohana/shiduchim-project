@@ -58,4 +58,15 @@ public interface SystemSettingsRepository extends JpaRepository<SystemSettings, 
     // ============================================================
 
     Optional<SystemSettings> findTopByOrderByUpdatedAtDesc();
+
+    // =====================================================
+    // ✅ DB-side purge helpers (MASTER-ONE)
+    // =====================================================
+
+    long deleteByUpdatedAtBefore(LocalDateTime cutoff);
+
+    long deleteByKeyNameStartingWith(String prefix);
+
+    long deleteByKeyNameStartingWithAndUpdatedAtBefore(String prefix, LocalDateTime cutoff);
+
 }

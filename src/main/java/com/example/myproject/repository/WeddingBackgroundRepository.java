@@ -112,4 +112,8 @@ public interface WeddingBackgroundRepository extends JpaRepository<WeddingBackgr
     List<WeddingBackground> findByWedding_IdAndTypeAndDeletedFalseOrderByCreatedAtDesc(Long weddingId, BackgroundType type);
 
     List<WeddingBackground> findByActiveTrueAndDeletedFalseAndUnsuitableFalseOrderByCreatedAtDesc();
+
+    // ✅ DB-side delete for hard delete wedding
+    long deleteByWedding_Id(Long weddingId);
+
 }

@@ -121,6 +121,12 @@ public class WeddingService {
         User actor = getUserOrThrow(actorUserId);
         Wedding wedding = getWeddingOrThrow(weddingId);
 
+        String statusNow = computeWeddingStatus(wedding, LocalDateTime.now());
+        if ("ENDED".equalsIgnoreCase(statusNow)) {
+            enforceNoCoreChangesAfterEnded(wedding, patch);
+        }
+
+
         requireOwnerOrCoOwnerOrAdmin(actor, wedding);
         if (patch == null) throw new IllegalArgumentException("Patch is null");
         ensureNotCancelled(wedding);
@@ -194,6 +200,61 @@ public class WeddingService {
         return saved;
     }
 
+    private void enforceNoCoreChangesAfterEnded(Wedding existing, Wedding patch) {
+        if (patch == null) return;
+
+        if (patch.getName() != null && !java.util.Objects.equals(patch.getName(), existing.getName())) {
+            throw new IllegalStateException("לא ניתן לשנות שם חתונה אחרי שהחתונה הסתיימה");
+        }
+        if (patch.getWeddingDate() != null && !java.util.Objects.equals(patch.getWeddingDate(), existing.getWeddingDate())) {
+            throw new IllegalStateException("לא ניתן לשנות תאריך חתונה אחרי שהחתונה הסתיימה");
+        }
+        if (patch.getWeddingEndTime() != null && !java.util.Objects.equals(patch.getWeddingEndTime(), existing.getWeddingEndTime())) {
+            throw new IllegalStateException("לא ניתן לשנות שעת סיום אחרי שהחתונה הסתיימה");
+        }
+        if (patch.getHallName() != null && !java.util.Objects.equals(patch.getHallName(), existing.getHallName())) {
+            throw new IllegalStateException("לא ניתן לשנות אולם אחרי שהחתונה הסתיימה");
+        }
+        if (patch.getCity() != null && !java.util.Objects.equals(patch.getCity(), existing.getCity())) {
+            throw new IllegalStateException("לא ניתן לשנות עיר אחרי שהחתונה הסתיימה");
+        }
+    }
+
+    @Transactional
+    public void hardDeleteWedding(Long adminUserId, Long weddingId, String reason) {
+        User admin = getUserOrThrow(adminUserId);
+        requireAdmin(admin);
+
+        Wedding wedding = weddingRepository.findById(weddingId)
+                .orElseThrow(() -> new IllegalArgumentException("Wedding not found: " + weddingId));
+
+        String statusNow = computeWeddingStatus(wedding, LocalDateTime.now());
+        boolean allowed = "ENDED".equalsIgnoreCase(statusNow) || wedding.isCancelled();
+
+        if (!allowed) {
+            throw new IllegalStateException("מותר למחוק חתונה לצמיתות רק אחרי סיום/ביטול");
+        }
+
+        // מוחקים תלויים קודם
+        weddingParticipantRepository.deleteByWedding_Id(weddingId);
+        weddingBackgroundRepository.deleteByWedding_Id(weddingId);
+
+        // ואז מוחקים את החתונה עצמה
+        weddingRepository.delete(wedding);
+
+        audit(
+                "WEDDING_HARD_DELETE",
+                "WARN",
+                true,
+                adminUserId,
+                "Wedding hard deleted. reason=" + (reason == null ? "" : reason),
+                "Wedding",
+                weddingId,
+                null
+        );
+    }
+
+
     // =====================================================
     // ✅ 2) LIFECYCLE
     // =====================================================
@@ -220,7 +281,7 @@ public class WeddingService {
     public Wedding deactivateWedding(Long actorUserId, Long weddingId) {
         User actor = getUserOrThrow(actorUserId);
         Wedding wedding = getWeddingOrThrow(weddingId);
-        requireOwnerOrCoOwnerOrAdmin(actor, wedding);
+        requireAdmin(actor);
         ensureNotCancelled(wedding);
 
         wedding.setActive(false);
@@ -861,6 +922,17 @@ public class WeddingService {
     @Transactional(readOnly = true) public List<Wedding> listActiveLive(LocalDateTime now) { return weddingRepository.findByWeddingDateBeforeAndWeddingEndTimeAfterAndActiveTrue(now, now); }
 
     @Transactional(readOnly = true) public List<Wedding> listByBackgroundMode(BackgroundMode mode) { return weddingRepository.findByBackgroundMode(mode); }
+
+    @Transactional(readOnly = true)
+    public List<Wedding> listLegacyWeddingsWithImageUrl() {
+        return weddingRepository.findByBackgroundImageUrlIsNotNull();
+    }
+
+    @Transactional(readOnly = true)
+    public List<Wedding> listLegacyWeddingsWithVideoUrl() {
+        return weddingRepository.findByBackgroundVideoUrlIsNotNull();
+    }
+
 
     @Transactional(readOnly = true) public List<Wedding> listActiveTrueAndManuallyClosedFalse() { return weddingRepository.findByActiveTrueAndManuallyClosedFalse(); }
     @Transactional(readOnly = true) public List<Wedding> listActiveTrueAndLive(LocalDateTime now) { return weddingRepository.findByActiveTrueAndWeddingDateBeforeAndWeddingEndTimeAfter(now, now); }

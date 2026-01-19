@@ -14,6 +14,9 @@ import com.example.myproject.repository.WeddingRepository;
 import com.example.myproject.service.System.SystemSettingsService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.myproject.service.User.UserStateEvaluatorService;
+import com.example.myproject.service.notification.NotificationService;
+
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -41,16 +44,26 @@ public class ChatMessageService {
     // ✅ NEW dependency (SSOT)
     private final SystemSettingsService settings;
 
+    private final UserStateEvaluatorService userStateEvaluatorService;
+    private final NotificationService notificationService;
+
+
     public ChatMessageService(ChatMessageRepository chatMessageRepository,
                               UserRepository userRepository,
                               WeddingRepository weddingRepository,
                               MatchService matchService,
-                              SystemSettingsService settings) {
+                              SystemSettingsService settings,
+                              UserStateEvaluatorService userStateEvaluatorService,
+                              NotificationService notificationService
+    ) {
         this.chatMessageRepository = chatMessageRepository;
         this.userRepository = userRepository;
         this.weddingRepository = weddingRepository;
         this.matchService = matchService;
         this.settings = settings;
+        this.userStateEvaluatorService = userStateEvaluatorService;
+        this.notificationService = notificationService;
+
     }
 
     // ============================================================
@@ -203,6 +216,23 @@ public class ChatMessageService {
         matchService.validateNotSpam(matchId, resolveAntiSpamCooldownSeconds()); // ✅ FIX
 
         Long recipientId = resolveOtherUserId(match, senderUserId);
+        Long meetingWeddingId = match.getMeetingWeddingId();
+
+        // ✅ Gate (SYNC): אצלך אין assertCanMessage, אז משתמשים ב-evaluateUserState
+        User sender = userRepository.findById(senderUserId)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + senderUserId));
+
+        UserStateEvaluatorService.UserStateSummary senderState =
+                userStateEvaluatorService.evaluateUserState(sender);
+
+        if (senderState != null) {
+            if (!senderState.isCanSendMessage()) {
+                throw new IllegalStateException("User cannot send messages right now.");
+            }
+            if (!senderState.isHasPrimaryPhoto()) {
+                throw new IllegalStateException("Primary photo is required to send messages.");
+            }
+        }
 
         ChatMessage msg = buildMessage(
                 match,
@@ -216,8 +246,26 @@ public class ChatMessageService {
 
         ChatMessage saved = chatMessageRepository.save(msg);
         matchService.onChatMessageSent(matchId, senderUserId);
+
+        // ✅ Notify recipient (SYNC): יש לך notifyChatMessage ב-NotificationService
+        try {
+            notificationService.notifyChatMessage(
+                    saved.getId(),
+                    senderUserId,
+                    recipientId,
+                    matchId,
+                    meetingWeddingId
+            );
+        } catch (Exception ignore) {
+            // לא מפילים שליחת הודעה בגלל Notification
+        }
+
         return saved;
     }
+
+
+
+
 
     // ============================================================
     // ✅ 7 — Attachments placeholder (disabled)

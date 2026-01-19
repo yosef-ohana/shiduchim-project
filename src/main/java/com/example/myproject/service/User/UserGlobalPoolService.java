@@ -15,8 +15,17 @@ public class UserGlobalPoolService {
 
     private final UserRepository userRepository;
 
-    public UserGlobalPoolService(UserRepository userRepository) {
+    // ✅ Added per patch
+    private final SystemRulesService systemRulesService;
+    private final UserStateEvaluatorService userStateEvaluatorService;
+
+    // ✅ Updated constructor per patch
+    public UserGlobalPoolService(UserRepository userRepository,
+                                 SystemRulesService systemRulesService,
+                                 UserStateEvaluatorService userStateEvaluatorService) {
         this.userRepository = userRepository;
+        this.systemRulesService = systemRulesService;
+        this.userStateEvaluatorService = userStateEvaluatorService;
     }
 
     // =====================================================
@@ -25,7 +34,24 @@ public class UserGlobalPoolService {
     // =====================================================
 
     public User requestGlobalAccess(Long userId) {
+        // ✅ Eligibility gate (SSOT)
+        userStateEvaluatorService.assertEligibleForGlobal(userId);
+
         User user = getUserOrThrow(userId);
+
+        boolean approvedOnce =
+                user.getGlobalApprovedAt() != null
+                        || user.isGlobalAccessApproved()
+                        || user.getGlobalAccessState() == GlobalAccessState.APPROVED;
+
+        // ✅ Approved once => no downgrade, only toggle visibility in pool
+        if (approvedOnce) {
+            user.setInGlobalPool(true);
+            user.setGlobalAccessApproved(true);
+            user.setGlobalAccessState(GlobalAccessState.APPROVED);
+            user.setGlobalAccessRequest(false);
+            return userRepository.save(user);
+        }
 
         if (user.isInGlobalPool()) {
             return user; // כבר בפנים → אין מה לעשות
@@ -37,7 +63,7 @@ public class UserGlobalPoolService {
         user.setGlobalAccessState(GlobalAccessState.REQUESTED);
         user.setGlobalRequestedAt(LocalDateTime.now());
         user.setGlobalRejectedAt(null);
-        user.setGlobalApprovedAt(null);
+        // ❌ לא מאפסים globalApprovedAt כאן
 
         return userRepository.save(user);
     }
@@ -52,13 +78,32 @@ public class UserGlobalPoolService {
         user.setGlobalAccessRequest(false);
         user.setInGlobalPool(true);
         user.setGlobalAccessState(GlobalAccessState.APPROVED);
-        user.setGlobalApprovedAt(LocalDateTime.now());
+
+        // ✅ per patch: don't override if already set
+        if (user.getGlobalApprovedAt() == null) {
+            user.setGlobalApprovedAt(LocalDateTime.now());
+        }
+
         user.setGlobalRejectedAt(null);
         return userRepository.save(user);
     }
 
     public User rejectGlobalAccess(Long userId, boolean keepRequestFlag) {
         User user = getUserOrThrow(userId);
+
+        boolean approvedOnce =
+                user.getGlobalApprovedAt() != null
+                        || user.isGlobalAccessApproved()
+                        || user.getGlobalAccessState() == GlobalAccessState.APPROVED;
+
+        // ✅ Approved once => no downgrade, only temporary removal from pool
+        if (approvedOnce) {
+            user.setInGlobalPool(false);
+            user.setGlobalAccessRequest(false);
+            user.setGlobalAccessApproved(true);
+            user.setGlobalAccessState(GlobalAccessState.APPROVED);
+            return userRepository.save(user);
+        }
 
         user.setGlobalAccessApproved(false);
         user.setInGlobalPool(false);
@@ -74,6 +119,20 @@ public class UserGlobalPoolService {
 
     public User removeFromGlobalPool(Long userId) {
         User user = getUserOrThrow(userId);
+
+        boolean approvedOnce =
+                user.getGlobalApprovedAt() != null
+                        || user.isGlobalAccessApproved()
+                        || user.getGlobalAccessState() == GlobalAccessState.APPROVED;
+
+        // ✅ Approved once => no downgrade, only temporary removal from pool
+        if (approvedOnce) {
+            user.setInGlobalPool(false);
+            user.setGlobalAccessRequest(false);
+            user.setGlobalAccessApproved(true);
+            user.setGlobalAccessState(GlobalAccessState.APPROVED);
+            return userRepository.save(user);
+        }
 
         user.setInGlobalPool(false);
         user.setGlobalAccessApproved(false);

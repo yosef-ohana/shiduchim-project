@@ -13,9 +13,13 @@ import java.time.LocalDateTime;
 public class UserProfileService {
 
     private final UserRepository userRepository;
+    private final UserSettingsService userSettingsService;
 
-    public UserProfileService(UserRepository userRepository) {
+
+    public UserProfileService(UserRepository userRepository,
+                              UserSettingsService userSettingsService) {
         this.userRepository = userRepository;
+        this.userSettingsService = userSettingsService;
     }
 
     // =====================================================
@@ -97,6 +101,14 @@ public class UserProfileService {
         user.setSmokes(smokes);
 
         recomputeFullProfileCompleted(user);
+        // =====================================================
+// ✅ Auto-unlock after completing full profile
+// =====================================================
+        if (user.isFullProfileCompleted() && userSettingsService.isCurrentlyLocked(userId)) {
+            userSettingsService.unlockAfterWedding(userId, "Profile completed");
+            user.setProfileLockedAfterWedding(false); // mirror/UI בלבד
+        }
+
         recomputeProfileState(user);
         user.setLastProfileUpdateAt(LocalDateTime.now());
 

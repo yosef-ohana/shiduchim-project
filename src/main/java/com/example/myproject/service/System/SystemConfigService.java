@@ -817,4 +817,65 @@ public class SystemConfigService {
         if (s == null) return "";
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
+
+    // =====================================================
+    // ✅ History / Auditing wrappers (MASTER-ONE)
+    // =====================================================
+
+    @Transactional(readOnly = true)
+    public List<SystemConfig> getConfigHistoryByCategory(String category, String environment, int limit) {
+        if (category == null || category.isBlank()) return List.of();
+
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+
+        // ניסיון קודם עם environment מדויק (מתודה קיימת אצלך ב-ZIP)
+        List<SystemConfig> rows =
+                systemConfigRepository.findByEnvironmentAndCategoryInJsonOrderByCreatedAtDesc(environment, category);
+
+        // fallback: environment = null (כמו שהוגדר במסמך)
+        if ((rows == null || rows.isEmpty()) && environment != null) {
+            rows = systemConfigRepository.findByEnvironmentAndCategoryInJsonOrderByCreatedAtDesc(null, category);
+        }
+
+        if (rows == null || rows.isEmpty()) return List.of();
+        return rows.stream().limit(safeLimit).toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<SystemConfig> getChangesByAdmin(String updatedBy, LocalDateTime since, String environment, int limit) {
+        if (updatedBy == null || updatedBy.isBlank()) return List.of();
+        if (since == null) since = LocalDateTime.now().minusDays(30);
+
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+
+        // דורש את מתודת ה-Repo מהבלוק B (updatedBy בתוך jsonConfig + Pageable)
+        List<SystemConfig> rows = systemConfigRepository.findByUpdatedByInJsonAndUpdatedAtAfterOrderByUpdatedAtDesc(
+                updatedBy,
+                since,
+                org.springframework.data.domain.PageRequest.of(0, safeLimit)
+        );
+
+        if (rows == null || rows.isEmpty()) return List.of();
+
+        // סינון environment ב-Java + fallback ל-null (כמו שהוגדר במסמך)
+        if (environment == null) return rows;
+
+        String env = environment.trim();
+        return rows.stream()
+                .filter(sc -> sc.getEnvironment() == null || env.equalsIgnoreCase(sc.getEnvironment()))
+                .toList();
+    }
+
+    @Transactional
+    public long purgeOlderThan(LocalDateTime cutoff) {
+        if (cutoff == null) cutoff = LocalDateTime.now().minusDays(365);
+
+        // דורש deleteByCreatedAtBefore מהבלוק B
+        long deleted = systemConfigRepository.deleteByCreatedAtBefore(cutoff);
+
+        // חשוב: אחרי purge לנקות caches פנימיים
+        refreshAllCaches("purgeOlderThan");
+        return deleted;
+    }
+
 }

@@ -13,6 +13,9 @@ import com.example.myproject.service.System.SystemSettingsService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -823,4 +826,25 @@ public class UserSettingsService {
         if (ok) return;
         setField(target, fieldName, value);
     }
+
+    // =====================================================
+    // ✅ Paging wrappers (MASTER-ONE)
+    // =====================================================
+
+    @Transactional(readOnly = true)
+    public Page<UserSettings> listByDefaultMode(DefaultMode mode, Pageable pageable) {
+        if (mode == null) throw new IllegalArgumentException("mode is null");
+        return settingsRepo.findByDefaultMode(mode, pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<UserSettings> listLockedAfterWedding(Pageable pageable) {
+        return settingsRepo.findByLockedAfterWeddingTrue(pageable);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<UserSettings> listLockedUntilNotNull(Pageable pageable) {
+        return settingsRepo.findByLockedUntilIsNotNull(pageable);
+    }
+
 }

@@ -10,8 +10,13 @@ import com.example.myproject.repository.UserRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.persistence.PersistenceContext;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.PageImpl;
+
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -35,6 +40,32 @@ public class NotificationUserService {
         this.notificationRepository = notificationRepository;
         this.userRepository = userRepository;
     }
+
+    // =====================================================
+    // ✅ Weekly Digest (MASTER decision: INNER DTO only)
+    // =====================================================
+    public static class WeeklyDigestDto {
+        private final LocalDateTime since;
+        private final LocalDateTime until;
+        private final long total;
+        private final Map<NotificationType, Long> byType;
+
+        public WeeklyDigestDto(LocalDateTime since,
+                               LocalDateTime until,
+                               long total,
+                               Map<NotificationType, Long> byType) {
+            this.since = since;
+            this.until = until;
+            this.total = total;
+            this.byType = byType;
+        }
+
+        public LocalDateTime getSince() { return since; }
+        public LocalDateTime getUntil() { return until; }
+        public long getTotal() { return total; }
+        public Map<NotificationType, Long> getByType() { return byType; }
+    }
+
 
     // =========================================================
     // DTO — מסך Notification Center/Badge/Important Only
@@ -254,6 +285,93 @@ public class NotificationUserService {
                 .map(NotificationUserItemDto::from)
                 .toList();
     }
+
+    // =========================================================
+    // ✅ Paging wrappers (Notification Center)
+    // =========================================================
+
+    @Transactional(readOnly = true)
+    public Page<NotificationUserItemDto> getAllForUser(Long userId, Pageable pageable) {
+        if (userId == null) throw new IllegalArgumentException("userId is required");
+        if (pageable == null) pageable = PageRequest.of(0, 50);
+
+        // ✅ מרכז התראות אמיתי (deleted=false, hidden=false + pinned-first)
+        List<NotificationUserItemDto> all = getActiveCenterForUser(userId);
+
+        int total = (all == null) ? 0 : all.size();
+        int start = (int) pageable.getOffset();
+        int end = Math.min(start + pageable.getPageSize(), total);
+
+        List<NotificationUserItemDto> content =
+                (total == 0 || start >= total) ? List.of() : all.subList(start, end);
+
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    @Transactional(readOnly = true)
+    public Page<NotificationUserItemDto> getSinceForUser(Long userId, LocalDateTime since, Pageable pageable) {
+        if (userId == null) throw new IllegalArgumentException("userId is required");
+        if (since == null) since = LocalDateTime.now().minusDays(7);
+        if (pageable == null) pageable = PageRequest.of(0, 50);
+
+        // ב-ZIP הקיים יש List לפי createdAtAfter בלי deleted/hidden,
+        // אז מסננים פה כדי לשמור SSOT התנהגותי (מרכז התראות = לא מחוקים/לא מוסתרים).
+        List<NotificationUser> rows =
+                notificationUserRepository.findByUser_IdAndCreatedAtAfterOrderByCreatedAtDesc(userId, since);
+
+        List<NotificationUserItemDto> all = (rows == null ? List.<NotificationUserItemDto>of() :
+                rows.stream()
+                        .filter(nu -> nu != null && !nu.isDeleted() && !nu.isHidden())
+                        .sorted(pinnedFirstNewestFirst())
+                        .map(NotificationUserItemDto::from)
+                        .toList()
+        );
+
+        int total = all.size();
+        int start = (int) pageable.getOffset();
+        int end = Math.min(start + pageable.getPageSize(), total);
+
+        List<NotificationUserItemDto> content =
+                (total == 0 || start >= total) ? List.of() : all.subList(start, end);
+
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    @Transactional(readOnly = true)
+    public WeeklyDigestDto buildWeeklyDigest(Long userId, LocalDateTime since) {
+        if (userId == null) {
+            return new WeeklyDigestDto(
+                    null,
+                    LocalDateTime.now(),
+                    0,
+                    new EnumMap<>(NotificationType.class)
+            );
+        }
+        if (since == null) since = LocalDateTime.now().minusDays(7);
+
+        // משתמשים במתודה שקיימת ב-ZIP, ומסננים deleted/hidden בשירות
+        List<NotificationUser> rows =
+                notificationUserRepository.findByUser_IdAndCreatedAtAfterOrderByCreatedAtDesc(userId, since);
+
+        Map<NotificationType, Long> map = new EnumMap<>(NotificationType.class);
+        long total = 0;
+
+        if (rows != null) {
+            for (NotificationUser nu : rows) {
+                if (nu == null || nu.isDeleted() || nu.isHidden()) continue;
+                if (nu.getNotification() == null) continue;
+
+                NotificationType t = nu.getNotification().getType();
+                if (t == null) continue;
+
+                map.put(t, map.getOrDefault(t, 0L) + 1L);
+                total++;
+            }
+        }
+
+        return new WeeklyDigestDto(since, LocalDateTime.now(), total, map);
+    }
+
 
     @Transactional(readOnly = true)
     public List<NotificationUserItemDto> getUnreadForUser(Long userId) {

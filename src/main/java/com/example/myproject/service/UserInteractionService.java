@@ -3,18 +3,20 @@ package com.example.myproject.service;
 import com.example.myproject.model.Match;
 import com.example.myproject.model.User;
 import com.example.myproject.model.UserAction;
-import com.example.myproject.model.enums.UserActionCategory;
-import com.example.myproject.model.enums.UserActionType;
-import com.example.myproject.model.enums.WeddingMode;
+import com.example.myproject.model.Wedding;
+import com.example.myproject.model.enums.*;
 import com.example.myproject.repository.MatchRepository;
 import com.example.myproject.repository.UserActionRepository;
 import com.example.myproject.repository.UserRepository;
+import com.example.myproject.repository.WeddingRepository;
 import com.example.myproject.service.System.SystemSettingsService;
 import com.example.myproject.service.User.UserStateEvaluatorService;
+import com.example.myproject.service.notification.NotificationService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
 
 import java.lang.reflect.Method;
 import java.time.LocalDate;
@@ -53,13 +55,24 @@ public class UserInteractionService {
     private final UserStateEvaluatorService userStateEvaluator; // state gate
     private final SystemSettingsService settings;
 
+    private final NotificationService notificationService;
+    private final ChatMessageService chatMessageService;
+    private final WeddingRepository weddingRepository;
+    private final UserReportService userReportService;
+
+
     public UserInteractionService(UserRepository userRepo,
                                   UserActionRepository actionRepo,
                                   MatchRepository matchRepo,
                                   MatchService matchService,
                                   UserActionService userActionService,
                                   UserStateEvaluatorService userStateEvaluator,
-                                  SystemSettingsService settings) {
+                                  SystemSettingsService settings,
+                                  NotificationService notificationService,
+                                  ChatMessageService chatMessageService,
+                                  WeddingRepository weddingRepository,
+                                  UserReportService userReportService
+    ) {
         this.userRepo = userRepo;
         this.actionRepo = actionRepo;
         this.matchRepo = matchRepo;
@@ -67,6 +80,11 @@ public class UserInteractionService {
         this.userActionService = userActionService;
         this.userStateEvaluator = userStateEvaluator;
         this.settings = settings;
+        this.notificationService = notificationService;
+        this.chatMessageService = chatMessageService;
+        this.weddingRepository = weddingRepository;
+        this.userReportService = userReportService;
+
     }
 
     // =====================================================
@@ -85,7 +103,7 @@ public class UserInteractionService {
         public String deviceInfo;
 
         public boolean liveWeddingRules = false;        // “חתונה חיה”
-        public boolean enforceUserStateGate = true;     // gate ב-global
+        public boolean enforceUserStateGate = true;// gate ב-global
     }
 
     public static class InteractionResult {
@@ -140,8 +158,85 @@ public class UserInteractionService {
         actorIdx.put(saved);
 
         boolean mutual = isMutualLike(actorIdx, targetIdx, actorId, targetId);
+
+        // =====================================================
+// ✅ MASTER-ONE: notifications + mutual chat open
+// =====================================================
+        if (notificationService != null) {
+            if (mutual) {
+                try {
+                    Match match = matchService.onUserActionLike(actorId, targetId, ctx.weddingId, ctx.originWeddingId);
+
+                    if (match != null && match.getId() != null) {
+                        matchService.setUserApproval(match.getId(), actorId, true);
+                        matchService.setUserApproval(match.getId(), targetId, true);
+
+                        boolean liveWeddingNow = false;
+                        try {
+                            if (ctx.weddingId != null && weddingRepository != null) {
+                                Wedding w = weddingRepository.findById(ctx.weddingId).orElse(null);
+                                liveWeddingNow = (w != null && w.isLive(LocalDateTime.now()));
+                            }
+                        } catch (Exception ignored) {}
+
+                        try {
+                            if (chatMessageService != null) {
+                                chatMessageService.onMatchBecameMutual(match.getId(), liveWeddingNow);
+                            }
+                        } catch (Exception ignored) {}
+
+                        // notify both sides - MATCH_MUTUAL
+                        try {
+                            NotificationService.CreateNotificationRequest req1 = new NotificationService.CreateNotificationRequest();
+                            req1.recipientUserId = actorId;
+                            req1.type = NotificationType.MATCH_MUTUAL;
+                            req1.title = liveWeddingNow ? "מאץ' בזמן חתונה!" : "יש מאץ' חדש";
+                            req1.message = "נוצר מאץ' חדש ביניכם";
+                            req1.actorUserId = targetId;
+                            req1.weddingId = ctx.weddingId;
+                            req1.popupEligible = true;
+                            req1.priorityLevel = 1;
+                            notificationService.create(req1);
+                        } catch (Exception ignored) {}
+
+                        try {
+                            NotificationService.CreateNotificationRequest req2 = new NotificationService.CreateNotificationRequest();
+                            req2.recipientUserId = targetId;
+                            req2.type = NotificationType.MATCH_MUTUAL;
+                            req2.title = liveWeddingNow ? "מאץ' בזמן חתונה!" : "יש מאץ' חדש";
+                            req2.message = "נוצר מאץ' חדש ביניכם";
+                            req2.actorUserId = actorId;
+                            req2.weddingId = ctx.weddingId;
+                            req2.popupEligible = true;
+                            req2.priorityLevel = 1;
+                            notificationService.create(req2);
+                        } catch (Exception ignored) {}
+                    }
+                } catch (Exception ignored) {
+                    // no-op
+                }
+            } else {
+                // not mutual => notify target about like
+                try {
+                    NotificationService.CreateNotificationRequest req = new NotificationService.CreateNotificationRequest();
+                    req.recipientUserId = targetId;
+                    req.type = NotificationType.LIKE_RECEIVED;
+                    req.title = "לייק חדש";
+                    req.message = "קיבלת לייק חדש";
+                    req.actorUserId = actorId;
+                    req.weddingId = ctx.weddingId;
+                    req.popupEligible = true;
+                    req.priorityLevel = 0;
+                    notificationService.create(req);
+                } catch (Exception ignored) {
+                    // no-op
+                }
+            }
+        }
+
         return new InteractionResult(saved, mutual, mutual ? "Mutual positive detected" : "Like recorded");
     }
+
 
     public InteractionResult dislike(Long actorId, Long targetId, InteractionContext ctx) {
         ctx = normalizeCtx(ctx);
@@ -302,6 +397,82 @@ public class UserInteractionService {
         actorIdx.put(saved);
 
         boolean mutual = isMutualLike(actorIdx, targetIdx, actorId, targetId);
+
+        // =====================================================
+// ✅ MASTER-ONE: notifications + mutual chat open
+// =====================================================
+        if (notificationService != null) {
+            if (mutual) {
+                try {
+                    Match match = matchService.onUserActionLike(actorId, targetId, ctx.weddingId, ctx.originWeddingId);
+
+                    if (match != null && match.getId() != null) {
+                        matchService.setUserApproval(match.getId(), actorId, true);
+                        matchService.setUserApproval(match.getId(), targetId, true);
+
+                        boolean liveWeddingNow = false;
+                        try {
+                            if (ctx.weddingId != null && weddingRepository != null) {
+                                Wedding w = weddingRepository.findById(ctx.weddingId).orElse(null);
+                                liveWeddingNow = (w != null && w.isLive(LocalDateTime.now()));
+                            }
+                        } catch (Exception ignored) {}
+
+                        try {
+                            if (chatMessageService != null) {
+                                chatMessageService.onMatchBecameMutual(match.getId(), liveWeddingNow);
+                            }
+                        } catch (Exception ignored) {}
+
+                        // notify both sides - MATCH_MUTUAL
+                        try {
+                            NotificationService.CreateNotificationRequest req1 = new NotificationService.CreateNotificationRequest();
+                            req1.recipientUserId = actorId;
+                            req1.type = NotificationType.MATCH_MUTUAL;
+                            req1.title = liveWeddingNow ? "מאץ' בזמן חתונה!" : "יש מאץ' חדש";
+                            req1.message = "נוצר מאץ' חדש ביניכם";
+                            req1.actorUserId = targetId;
+                            req1.weddingId = ctx.weddingId;
+                            req1.popupEligible = true;
+                            req1.priorityLevel = 1;
+                            notificationService.create(req1);
+                        } catch (Exception ignored) {}
+
+                        try {
+                            NotificationService.CreateNotificationRequest req2 = new NotificationService.CreateNotificationRequest();
+                            req2.recipientUserId = targetId;
+                            req2.type = NotificationType.MATCH_MUTUAL;
+                            req2.title = liveWeddingNow ? "מאץ' בזמן חתונה!" : "יש מאץ' חדש";
+                            req2.message = "נוצר מאץ' חדש ביניכם";
+                            req2.actorUserId = actorId;
+                            req2.weddingId = ctx.weddingId;
+                            req2.popupEligible = true;
+                            req2.priorityLevel = 1;
+                            notificationService.create(req2);
+                        } catch (Exception ignored) {}
+                    }
+                } catch (Exception ignored) {
+                    // no-op
+                }
+            } else {
+                // not mutual => notify target about like (superlike treated as like_received)
+                try {
+                    NotificationService.CreateNotificationRequest req = new NotificationService.CreateNotificationRequest();
+                    req.recipientUserId = targetId;
+                    req.type = NotificationType.LIKE_RECEIVED;
+                    req.title = "לייק חדש";
+                    req.message = "קיבלת לייק חדש";
+                    req.actorUserId = actorId;
+                    req.weddingId = ctx.weddingId;
+                    req.popupEligible = true;
+                    req.priorityLevel = 0;
+                    notificationService.create(req);
+                } catch (Exception ignored) {
+                    // no-op
+                }
+            }
+        }
+
         return new InteractionResult(saved, mutual, mutual ? "Mutual positive detected (via superlike)" : "SuperLike recorded");
     }
 
@@ -458,6 +629,21 @@ public class UserInteractionService {
         cmd.enforceCooldownSameType = false;
 
         UserAction saved = userActionService.record(cmd);
+
+        // =====================================================
+// ✅ MASTER-ONE: persist report in UserReport module
+// =====================================================
+        if (userReportService != null) {
+            String desc = (details == null || details.isBlank())
+                    ? (reportType == null ? "" : reportType.trim())
+                    : details.trim();
+
+            String additional = (reportType == null || reportType.isBlank()) ? null : reportType.trim();
+
+            userReportService.createReport(reporterId, targetId, ReportType.OTHER, desc, additional);
+        }
+
+
         return new InteractionResult(saved, false, "Report signal recorded (UserReport must be created separately)");
     }
 

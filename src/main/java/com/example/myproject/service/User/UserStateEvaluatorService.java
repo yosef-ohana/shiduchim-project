@@ -9,7 +9,9 @@ import com.example.myproject.repository.UserRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 /**
@@ -32,8 +34,12 @@ public class UserStateEvaluatorService {
 
     private final UserRepository userRepository;
 
-    public UserStateEvaluatorService(UserRepository userRepository) {
+    // ✅ NEW: source of truth for "currently locked"
+    private final UserSettingsService userSettingsService;
+
+    public UserStateEvaluatorService(UserRepository userRepository, UserSettingsService userSettingsService) {
         this.userRepository = userRepository;
+        this.userSettingsService = userSettingsService;
     }
 
     // =====================================================
@@ -53,11 +59,19 @@ public class UserStateEvaluatorService {
     public UserStateSummary evaluateUserState(User user) {
         List<String> reasons = new ArrayList<>();
 
+        Long userId = user.getId();
+
         boolean deletionRequested = user.isDeletionRequested();
         boolean basicCompleted = user.isBasicProfileCompleted();
         boolean fullCompleted = user.isFullProfileCompleted();
         boolean hasPrimaryPhoto = user.isHasPrimaryPhoto();
-        boolean profileLocked = user.isProfileLockedAfterWedding();
+
+        // ✅ SSOT (Compilation-safe): at least 1 photo (not necessarily primary)
+        boolean hasAnyPhoto = hasAtLeastOnePhoto(user);
+
+        // ✅ SSOT: lock source of truth comes from UserSettingsService
+        boolean profileLocked = (userId != null) && userSettingsService.isCurrentlyLocked(userId);
+
         ProfileState profileState = user.getProfileState();
         GlobalAccessState globalState = user.getGlobalAccessState();
         WeddingMode weddingMode = user.getWeddingMode();
@@ -66,35 +80,45 @@ public class UserStateEvaluatorService {
         boolean inGlobalPool = user.isInGlobalPool();
 
         // --- האם מותר לעדכן פרופיל ---
-        boolean canUpdateProfile = !deletionRequested && !profileLocked;
+        // ✅ SSOT: גם אם נעול, עדיין מותר לערוך כדי להשתחרר מהנעילה.
+        boolean canUpdateProfile = !deletionRequested;
         if (!canUpdateProfile) {
-            if (deletionRequested) {
-                reasons.add("בקשת מחיקת חשבון פעילה – לא ניתן לעדכן פרופיל.");
-            }
-            if (profileLocked) {
-                reasons.add("הפרופיל נעול לאחר חתונה – חוק נעילת פרופיל אחרי אירוע.");
-            }
+            reasons.add("בקשת מחיקת חשבון פעילה – לא ניתן לעדכן פרופיל.");
+        }
+        if (profileLocked) {
+            reasons.add("החשבון נעול כרגע (UserSettings) – פעולות מאגר/אינטראקציות מוגבלות עד השלמת פרופיל מלא.");
         }
 
         // --- האם מותר לשנות תמונות ---
-        boolean canChangePhotos = !deletionRequested && !profileLocked;
+        // ✅ SSOT: גם אם נעול, עדיין מותר להעלות/לנהל תמונות כדי להשתחרר.
+        boolean canChangePhotos = !deletionRequested;
         if (!canChangePhotos) {
-            reasons.add("שינוי תמונות חסום עקב נעילת פרופיל או מחיקת חשבון.");
+            reasons.add("שינוי תמונות חסום עקב בקשת מחיקה פעילה.");
         }
 
         // --- האם מותר לבקש/להיכנס למאגר גלובלי ---
+        // ✅ SSOT: Global דורש Full + primary + ≥1 photo + not locked + verified
         boolean canEnterGlobalPool = true;
+
         if (!verified) {
             canEnterGlobalPool = false;
             reasons.add("המשתמש לא מאומת – אי אפשר להיכנס למאגר גלובלי.");
         }
-        if (!basicCompleted) {
+        if (!fullCompleted) {
             canEnterGlobalPool = false;
-            reasons.add("פרופיל בסיסי לא מושלם – דרישת חובה למאגר גלובלי.");
+            reasons.add("פרופיל מלא לא מושלם – דרישת חובה למאגר גלובלי.");
+        }
+        if (!hasAnyPhoto) {
+            canEnterGlobalPool = false;
+            reasons.add("אין אף תמונה – חוק 'לפחות תמונה אחת' למאגר גלובלי.");
         }
         if (!hasPrimaryPhoto) {
             canEnterGlobalPool = false;
             reasons.add("אין תמונה ראשית – חוק 'תמונה ראשית חובה' למאגר גלובלי.");
+        }
+        if (profileLocked) {
+            canEnterGlobalPool = false;
+            reasons.add("החשבון נעול – לא ניתן להיכנס למאגר גלובלי עד שחרור נעילה.");
         }
         if (deletionRequested) {
             canEnterGlobalPool = false;
@@ -108,17 +132,20 @@ public class UserStateEvaluatorService {
         }
 
         // --- האם מותר להיכנס לחתונה ---
-        boolean canEnterWedding = !deletionRequested;
+        boolean canEnterWedding = !deletionRequested && !profileLocked;
         if (!user.isCanViewWedding()) {
             canEnterWedding = false;
             reasons.add("חסימת גישה לחתונות – canViewWedding=false.");
         }
+        if (profileLocked) {
+            reasons.add("החשבון נעול – לא ניתן להיכנס למצב חתונה עד שחרור נעילה.");
+        }
 
         // --- האם מותר לעבור למצב Global Mode ---
-        boolean canSwitchToGlobalMode = inGlobalPool && !deletionRequested;
-        if (inGlobalPool && !hasPrimaryPhoto) {
-            canSwitchToGlobalMode = false;
-            reasons.add("מאגר גלובלי דורש תמונה ראשית – אי אפשר לעבור ל-GLOBAL mode בלי תמונה.");
+        // ✅ אם רוצים לעבור ל-GLOBAL mode - צריך לעמוד בתנאים של גלובלי
+        boolean canSwitchToGlobalMode = inGlobalPool && !deletionRequested && canEnterGlobalPool;
+        if (inGlobalPool && !canSwitchToGlobalMode) {
+            reasons.add("אי אפשר לעבור ל-GLOBAL mode כי תנאי מאגר גלובלי לא מתקיימים כרגע.");
         }
 
         // --- האם מותר לראות פרופילים של מין אחר/אותו מין ---
@@ -126,11 +153,15 @@ public class UserStateEvaluatorService {
         boolean canViewSameGenderProfiles = user.isAllowProfileViewBySameGender();
 
         // --- האם מותר לשלוח לייק / הודעה ---
-        boolean canLike = hasPrimaryPhoto && !deletionRequested;
-        boolean canSendMessage = hasPrimaryPhoto && !deletionRequested;
+        // ✅ SSOT: אינטראקציות דורשות ≥1 photo + not locked
+        boolean canLike = hasAnyPhoto && !deletionRequested && !profileLocked;
+        boolean canSendMessage = hasAnyPhoto && !deletionRequested && !profileLocked;
 
-        if (!hasPrimaryPhoto) {
-            reasons.add("לייקים והודעות דורשים תמונה ראשית לפי כללי המערכת.");
+        if (!hasAnyPhoto) {
+            reasons.add("לייקים והודעות דורשים לפחות תמונה אחת לפי כללי המערכת.");
+        }
+        if (profileLocked) {
+            reasons.add("לייקים והודעות חסומים כאשר החשבון נעול.");
         }
         if (deletionRequested) {
             reasons.add("משתמש בהליך מחיקה – אינטראקציות ננעלות.");
@@ -162,6 +193,50 @@ public class UserStateEvaluatorService {
                 canViewSameGenderProfiles,
                 reasons
         );
+    }
+
+    // =====================================================
+    // ✅ Helper: at least 1 photo (Compilation-safe)
+    // =====================================================
+
+    private boolean hasAtLeastOnePhoto(User user) {
+        if (user == null) return false;
+
+        // 1) אם קיימת תמונה ראשית - ברור שיש לפחות אחת
+        if (user.isHasPrimaryPhoto()) return true;
+
+        // 2) נסיון best-effort דרך Reflection (לא שובר קומפילציה אם אין שדה/מתודה)
+        //    supports: getPhotosCount(), getUserPhotos(), getPhotos()
+        try {
+            Method m = user.getClass().getMethod("getPhotosCount");
+            Object v = m.invoke(user);
+            if (v instanceof Integer) return ((Integer) v) > 0;
+            if (v instanceof Long) return ((Long) v) > 0;
+        } catch (Exception ignore) {}
+
+        try {
+            Method m = user.getClass().getMethod("getUserPhotos");
+            Object v = m.invoke(user);
+            if (v instanceof Collection) return !((Collection<?>) v).isEmpty();
+        } catch (Exception ignore) {}
+
+        try {
+            Method m = user.getClass().getMethod("getPhotos");
+            Object v = m.invoke(user);
+            if (v instanceof Collection) return !((Collection<?>) v).isEmpty();
+        } catch (Exception ignore) {}
+
+        return false;
+    }
+
+    // =====================================================
+// ✅ SSOT Gate: Global eligibility
+// =====================================================
+    public void assertEligibleForGlobal(Long userId) {
+        UserStateSummary state = evaluateUserState(userId);
+        if (!state.isCanEnterGlobalPool()) {
+            throw new IllegalStateException(String.join(" | ", state.getReasonsBlocked()));
+        }
     }
 
     // =====================================================

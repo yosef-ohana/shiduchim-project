@@ -462,6 +462,60 @@ public class UserActionService {
     }
 
     // =====================================================
+// 🔒 Rate Limit / Cooldown / Duplicate detection
+// =====================================================
+
+    public static class ViewCountsDto {
+        private final long global;
+        private final Map<Long, Long> byWedding;
+        private final long total;
+
+        public ViewCountsDto(long global, Map<Long, Long> byWedding, long total) {
+            this.global = global;
+            this.byWedding = byWedding;
+            this.total = total;
+        }
+
+        public long getGlobal() { return global; }
+        public Map<Long, Long> getByWedding() { return byWedding; }
+        public long getTotal() { return total; }
+    }
+
+    @Transactional(readOnly = true)
+    public ViewCountsDto getViewCounts(Long targetId) {
+        if (targetId == null) return new ViewCountsDto(0, Map.of(), 0);
+
+        // אצלך enum כולל VIEW
+        UserActionType viewType = UserActionType.VIEW;
+
+        long global = repo.countByTarget_IdAndActionTypeAndWeddingIdIsNull(targetId, viewType);
+
+        // grouping ב-Java לפי פעולות VIEW האחרונות (Pageable כבר קיים אצלך בריפו)
+        List<UserAction> recent = repo.findByTarget_IdAndActionTypeOrderByCreatedAtDesc(
+                targetId,
+                viewType,
+                PageRequest.of(0, 10000)
+        );
+
+        Map<Long, Long> byWedding = new HashMap<>();
+        long sumWedding = 0;
+
+        if (recent != null) {
+            for (UserAction a : recent) {
+                if (a == null) continue;
+                Long wid = a.getWeddingId();
+                if (wid == null) continue;
+                byWedding.put(wid, byWedding.getOrDefault(wid, 0L) + 1L);
+            }
+            for (Long v : byWedding.values()) sumWedding += v;
+        }
+
+        long total = global + sumWedding;
+        return new ViewCountsDto(global, byWedding, total);
+    }
+
+
+    // =====================================================
     // 🔒 Rate Limit / Cooldown / Duplicate detection
     // =====================================================
 

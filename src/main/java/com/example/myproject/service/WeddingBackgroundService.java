@@ -18,6 +18,10 @@ import com.example.myproject.repository.WeddingRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.context.annotation.Lazy;
+import java.util.LinkedHashSet;
+import com.example.myproject.model.enums.NotificationType;
+
 
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -35,6 +39,7 @@ public class WeddingBackgroundService {
     private final WeddingRepository weddingRepository;
     private final UserRepository userRepository;
     private final WeddingParticipantRepository weddingParticipantRepository;
+
 
     private static final Set<WeddingParticipantRole> OWNER_ROLES =
             Set.of(WeddingParticipantRole.OWNER, WeddingParticipantRole.CO_OWNER);
@@ -58,6 +63,14 @@ public class WeddingBackgroundService {
 
     // optional direct logging via SystemLogRepository (if exists)
     private SystemLogRepository systemLogRepository;
+
+    // =====================================================
+    // ✅ Optional notification hook (avoid cycles)
+    // =====================================================
+    @Autowired(required = false)
+    @Lazy
+    private com.example.myproject.service.notification.NotificationService notificationService;
+
 
     @Autowired(required = false)
     public void setStorageService(BackgroundStorageService storageService) {
@@ -609,12 +622,49 @@ public class WeddingBackgroundService {
             Long weddingId = requireWeddingId(wb);
             resetWeddingIfActiveBackground(actorUserId, weddingId, wb.getId());
             audit("WEDDING_BG_MARK_UNSUITABLE", actorUserId, weddingId, wb.getId(), wb.getUnsuitableReason());
+
+            // =====================================================
+            // ✅ Notify owner + coOwners (optional, no hard dependency)
+            // =====================================================
+            // NOTE: "wedding" חייב להיות מוגדר כדי שלא נקבל Cannot resolve symbol
+            Wedding wedding = getWeddingOrThrow(weddingId);
+
+            if (notificationService != null && wedding != null) {
+                java.util.Set<Long> recipients = new java.util.LinkedHashSet<>();
+                if (wedding.getOwnerUserId() != null) recipients.add(wedding.getOwnerUserId());
+                if (wedding.getCoOwners() != null) {
+                    for (User co : wedding.getCoOwners()) {
+                        if (co != null && co.getId() != null) recipients.add(co.getId());
+                    }
+                }
+
+                String title = "רקע סומן כלא ראוי";
+                String msg = "הרקע בחתונה \"" + wedding.getName() + "\" סומן כלא ראוי. סיבה: "
+                        + (reason == null ? "" : reason);
+
+                for (Long rid : recipients) {
+                    com.example.myproject.service.notification.NotificationService.CreateNotificationRequest req =
+                            new com.example.myproject.service.notification.NotificationService.CreateNotificationRequest();
+
+                    req.recipientUserId = rid;
+                    req.type = com.example.myproject.model.enums.NotificationType.SYSTEM_ANNOUNCEMENT;
+                    req.title = title;
+                    req.message = msg;
+                    req.actorUserId = actorUserId;
+                    req.weddingId = wedding.getId();
+                    req.popupEligible = true;
+                    req.priorityLevel = 1;
+
+                    notificationService.create(req);
+                }
+            }
         } else {
             audit("GLOBAL_BG_MARK_UNSUITABLE", actorUserId, null, wb.getId(), wb.getUnsuitableReason());
         }
 
         return wb;
     }
+
 
     // ============================================================
     // 8) Soft delete + wedding fallback

@@ -78,6 +78,12 @@ public class SystemSettingsService {
             this.latestUpdatedAtSeen = latestUpdatedAtSeen;
         }
     }
+    // =====================================================
+// ✅ Cache control (MASTER-ONE)
+// =====================================================
+    private void clearCache() {
+        cacheRef.set(new CacheState(new ConcurrentHashMap<>(), LocalDateTime.MIN, LocalDateTime.MIN));
+    }
 
     private final AtomicReference<CacheState> cacheRef =
             new AtomicReference<>(new CacheState(new ConcurrentHashMap<>(), LocalDateTime.MIN, LocalDateTime.MIN));
@@ -626,30 +632,39 @@ public class SystemSettingsService {
     // ✅ MAINTENANCE / CLEANUP
     // =====================================================
 
+    @Transactional
     public int purgeUpdatedBefore(LocalDateTime cutoff) {
-        if (cutoff == null) cutoff = LocalDateTime.now().minusDays(180);
-        List<SystemSettings> oldOnes = listUpdatedBefore(cutoff);
+        if (cutoff == null) cutoff = LocalDateTime.now().minusDays(365);
 
-        List<String> keys = new ArrayList<>();
-        for (SystemSettings s : oldOnes) {
-            String k = safeGetString(s, "getKeyName");
-            if (!isBlank(k)) keys.add(k);
-        }
-        return deleteKeys(keys);
+        long deleted = repo.deleteByUpdatedAtBefore(cutoff);
+
+        // מאפסים cache מיד אחרי purge DB-side
+        clearCache();
+        return (int) Math.min(Integer.MAX_VALUE, deleted);
     }
 
+
+    @Transactional
     public int purgeByPrefix(String prefix) {
-        prefix = safeTrim(prefix);
-        if (isBlank(prefix)) return 0;
+        if (prefix == null || prefix.isBlank()) return 0;
 
-        List<SystemSettings> rows = listByPrefix(prefix);
-        List<String> keys = new ArrayList<>();
-        for (SystemSettings s : rows) {
-            String k = safeGetString(s, "getKeyName");
-            if (!isBlank(k)) keys.add(k);
-        }
-        return deleteKeys(keys);
+        long deleted = repo.deleteByKeyNameStartingWith(prefix.trim());
+
+        clearCache();
+        return (int) Math.min(Integer.MAX_VALUE, deleted);
     }
+
+    @Transactional
+    public int purgeByPrefixAndUpdatedBefore(String prefix, LocalDateTime cutoff) {
+        if (prefix == null || prefix.isBlank()) return 0;
+        if (cutoff == null) cutoff = LocalDateTime.now().minusDays(365);
+
+        long deleted = repo.deleteByKeyNameStartingWithAndUpdatedAtBefore(prefix.trim(), cutoff);
+
+        clearCache();
+        return (int) Math.min(Integer.MAX_VALUE, deleted);
+    }
+
 
     // =====================================================
     // ✅ INTERNAL: cache/db

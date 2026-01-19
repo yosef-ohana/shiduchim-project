@@ -233,4 +233,13 @@ public interface UserActionRepository extends JpaRepository<UserAction, Long> {
     @Modifying
     @Transactional
     void deleteByActor_IdAndTarget_Id(Long actorId, Long targetId);
+
+    // =====================================================
+// ✅ View stats (global vs wedding-scoped)
+// =====================================================
+
+    long countByTarget_IdAndActionTypeAndWeddingId(Long targetId, UserActionType type, Long weddingId);
+
+    long countByTarget_IdAndActionTypeAndWeddingIdIsNull(Long targetId, UserActionType type);
+
 }

@@ -19,12 +19,17 @@ public class UserWeddingContextService {
 
     private final UserRepository userRepository;
     private final WeddingRepository weddingRepository;
+    private final UserSettingsService userSettingsService;
+
 
     public UserWeddingContextService(UserRepository userRepository,
-                                     WeddingRepository weddingRepository) {
+                                     WeddingRepository weddingRepository,
+                                     UserSettingsService userSettingsService) {
         this.userRepository = userRepository;
         this.weddingRepository = weddingRepository;
+        this.userSettingsService = userSettingsService;
     }
+
 
     // =====================================================
     // 🔵 כניסה לחתונה לפי accessCode
@@ -74,18 +79,31 @@ public class UserWeddingContextService {
 
     public User exitWedding(Long userId) {
         User user = getUserOrThrow(userId);
-        LocalDateTime now = LocalDateTime.now();
 
+        Long prevWeddingId = user.getActiveWeddingId();
+
+        user.setWeddingMode(WeddingMode.PAST_WEDDING);
+        user.setLastWeddingId(prevWeddingId);
         user.setActiveWeddingId(null);
-        user.setWeddingExitAt(now);
 
-        // לוגיקה: אחרי חתונה – מצב ברירת מחדל גלובלי
-        user.setWeddingMode(WeddingMode.NONE);
-        user.setBackgroundMode(BackgroundMode.GLOBAL);
+        // משאירים את שאר ההתנהגות כמו שהיה (לא נוגעים מעבר לנדרש)
+        user.setWeddingExitAt(LocalDateTime.now());
         user.setBackgroundWeddingId(null);
+        user.setBackgroundMode(BackgroundMode.GLOBAL);
 
-        return userRepository.save(user);
+        User saved = userRepository.save(user);
+
+        // אם החתונה הסתיימה בפועל — נועלים (מקור אמת: UserSettingsService)
+        if (prevWeddingId != null) {
+            Wedding w = weddingRepository.findById(prevWeddingId).orElse(null);
+            if (w != null && w.isFinished(LocalDateTime.now())) {
+                userSettingsService.lockAfterWedding(userId, null, "Wedding ended");
+            }
+        }
+
+        return saved;
     }
+
 
     // =====================================================
     // 🔵 שינוי מצב רקע (GLOBAL / WEDDING / DEFAULT)

@@ -83,31 +83,58 @@ public class SystemRulesService {
      * - globalAccessApproved
      */
     public void enforceGlobalAccessStateRule(User user) {
-        boolean inPool = user.isInGlobalPool();
-        boolean requested = user.isGlobalAccessRequest();
-        boolean approved = user.isGlobalAccessApproved();
+        if (user == null) return;
 
-        GlobalAccessState state;
+        boolean approvedOnce =
+                user.getGlobalApprovedAt() != null
+                        || user.isGlobalAccessApproved()
+                        || user.getGlobalAccessState() == GlobalAccessState.APPROVED;
 
-        // ✅ מצב תקין: אושר + נמצא במאגר
-        if (approved && inPool) {
-            state = GlobalAccessState.APPROVED;
+        // ✅ Approved once => state נשאר APPROVED תמיד (אין downgrade בשגרה)
+        if (approvedOnce) {
+            user.setGlobalAccessState(GlobalAccessState.APPROVED);
+            user.setGlobalAccessApproved(true);
 
-            // ✅ אם יש חותמת דחייה — זה REJECTED (גם אם keepRequestFlag=true)
-        } else if (user.getGlobalRejectedAt() != null && !approved && !inPool) {
-            state = GlobalAccessState.REJECTED;
+            // יציאה זמנית מהגלובלי => רק inGlobalPool=false (לא נוגעים ב-approvedAt)
+            // אם הוא לא בפול כרגע - זה בסדר, לא משנים state.
 
-            // ✅ בקשה ממתינה
-        } else if (requested && !approved && !inPool) {
-            state = GlobalAccessState.REQUESTED;
-
-            // ✅ כל היתר
-        } else {
-            state = GlobalAccessState.NONE;
+            // אם הוא כבר מאושר - אין צורך ב"request"
+            if (user.isGlobalAccessRequest()) {
+                user.setGlobalAccessRequest(false);
+            }
+            return;
         }
 
-        user.setGlobalAccessState(state);
+        // =====================================================
+        // 🚦 רגיל (מי שלא אושר מעולם)
+        // =====================================================
+        boolean requested = user.isGlobalAccessRequest();
+        boolean approved = user.isGlobalAccessApproved();
+        boolean rejected = user.getGlobalRejectedAt() != null;
+
+        if (approved) {
+            user.setGlobalAccessState(GlobalAccessState.APPROVED);
+            user.setInGlobalPool(true);
+            user.setGlobalAccessRequest(false);
+            return;
+        }
+
+        if (rejected) {
+            user.setGlobalAccessState(GlobalAccessState.REJECTED);
+            user.setInGlobalPool(false);
+            return;
+        }
+
+        if (requested) {
+            user.setGlobalAccessState(GlobalAccessState.REQUESTED);
+            user.setInGlobalPool(false);
+            return;
+        }
+
+        user.setGlobalAccessState(GlobalAccessState.NONE);
+        user.setInGlobalPool(false);
     }
+
 
     // =====================================================
     // 🔵 נעילת פרופיל אחרי חתונה

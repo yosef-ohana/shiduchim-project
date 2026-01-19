@@ -5,6 +5,9 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.stereotype.Repository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -133,4 +136,20 @@ public interface NotificationUserRepository extends JpaRepository<NotificationUs
            ORDER BY nu.createdAt ASC
            """)
     List<NotificationUser> findPendingDeliveryForUser(@Param("userId") Long userId);
+
+    // =====================================================
+// ✅ Paging (MASTER-ONE) — Notification Center feeds
+// =====================================================
+
+    Page<NotificationUser> findByUser_IdAndDeletedFalseAndHiddenFalseOrderByCreatedAtDesc(
+            Long userId,
+            Pageable pageable
+    );
+
+    Page<NotificationUser> findByUser_IdAndDeletedFalseAndHiddenFalseAndCreatedAtAfterOrderByCreatedAtDesc(
+            Long userId,
+            LocalDateTime since,
+            Pageable pageable
+    );
+
 }

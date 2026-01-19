@@ -474,6 +474,107 @@ public class NotificationService {
     }
 
     // =========================================================
+    // ✅ MASTER-ONE Wrappers (no extra gating here)
+    // =========================================================
+
+    public void notifyLike(Long actorUserId, Long targetUserId, Long weddingIdOrNull) {
+        if (targetUserId == null) return;
+
+        CreateNotificationRequest req = new CreateNotificationRequest();
+        req.recipientUserId = targetUserId;
+        req.type = NotificationType.LIKE_RECEIVED;
+        req.title = "לייק חדש";
+        req.message = "קיבלת לייק חדש";
+        req.actorUserId = actorUserId;
+        req.weddingId = weddingIdOrNull;
+        req.popupEligible = true;
+        req.priorityLevel = 0;
+
+        create(req);
+    }
+
+    public void notifyMatch(Long matchId, Long userAId, Long userBId, Long weddingIdOrNull, boolean liveWeddingNow) {
+        if (userAId == null || userBId == null) return;
+
+        String title = liveWeddingNow ? "מאץ' בזמן חתונה!" : "יש מאץ' חדש";
+        String msg = "נוצר מאץ' חדש ביניכם";
+
+        createEvent(userAId, NotificationType.MATCH_MUTUAL, title, msg, null, weddingIdOrNull, matchId, null, true, 1);
+        createEvent(userBId, NotificationType.MATCH_MUTUAL, title, msg, null, weddingIdOrNull, matchId, null, true, 1);
+    }
+
+    public void notifyChatMessage(Long chatMessageId, Long senderId, Long receiverId, Long matchId, Long weddingIdOrNull) {
+        if (receiverId == null) return;
+
+        CreateNotificationRequest req = new CreateNotificationRequest();
+        req.recipientUserId = receiverId;
+        req.type = NotificationType.CHAT_MESSAGE_RECEIVED;
+        req.title = "הודעה חדשה";
+        req.message = "קיבלת הודעה חדשה בצ'אט";
+        req.actorUserId = senderId;
+        req.weddingId = weddingIdOrNull;
+        req.matchId = matchId;
+        req.chatMessageId = chatMessageId;
+        req.popupEligible = true;
+        req.priorityLevel = 0;
+
+        create(req);
+    }
+
+    public void notifyUserLocked(Long userId, String reason) {
+        if (userId == null) return;
+
+        String msg = "החשבון נעול כרגע. " + (reason == null ? "" : reason);
+        createSystemAnnouncement(userId, "החשבון נעול", msg, null, null);
+    }
+
+    public void createSystemAnnouncement(Long recipientUserId, String title, String message, Long weddingIdOrNull, Long actorUserId) {
+        if (recipientUserId == null) return;
+
+        CreateNotificationRequest req = new CreateNotificationRequest();
+        req.recipientUserId = recipientUserId;
+        req.type = NotificationType.SYSTEM_ANNOUNCEMENT;
+        req.title = (title == null || title.isBlank()) ? "הודעת מערכת" : title;
+        req.message = (message == null) ? "" : message;
+        req.actorUserId = actorUserId;
+        req.weddingId = weddingIdOrNull;
+        req.popupEligible = true;
+        req.priorityLevel = 1;
+
+        create(req);
+    }
+
+    private void createEvent(
+            Long recipientUserId,
+            NotificationType type,
+            String title,
+            String message,
+            Long actorUserId,
+            Long weddingId,
+            Long matchId,
+            Long chatMessageId,
+            boolean popupEligible,
+            int priorityLevel
+    ) {
+        if (recipientUserId == null) return;
+
+        CreateNotificationRequest req = new CreateNotificationRequest();
+        req.recipientUserId = recipientUserId;
+        req.type = type;
+        req.title = title;
+        req.message = message;
+        req.actorUserId = actorUserId;
+        req.weddingId = weddingId;
+        req.matchId = matchId;
+        req.chatMessageId = chatMessageId;
+        req.popupEligible = popupEligible;
+        req.priorityLevel = priorityLevel;
+
+        create(req);
+    }
+
+
+    // =========================================================
     // CENTER (lists + badge)
     // =========================================================
 
