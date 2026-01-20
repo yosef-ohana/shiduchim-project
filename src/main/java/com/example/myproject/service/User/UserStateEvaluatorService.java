@@ -5,7 +5,10 @@ import com.example.myproject.model.enums.BackgroundMode;
 import com.example.myproject.model.enums.GlobalAccessState;
 import com.example.myproject.model.enums.ProfileState;
 import com.example.myproject.model.enums.WeddingMode;
+import com.example.myproject.repository.MatchRepository;
+import com.example.myproject.repository.UserPhotoRepository;
 import com.example.myproject.repository.UserRepository;
+import com.example.myproject.repository.UserSettingsRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -33,14 +36,29 @@ import java.util.List;
 public class UserStateEvaluatorService {
 
     private final UserRepository userRepository;
-
-    // ✅ NEW: source of truth for "currently locked"
+    private final UserPhotoRepository userPhotoRepository;
+    private final MatchRepository matchRepository;
     private final UserSettingsService userSettingsService;
+    private final UserSettingsRepository userSettingsRepository;
 
-    public UserStateEvaluatorService(UserRepository userRepository, UserSettingsService userSettingsService) {
+    private final com.example.myproject.service.System.SystemConfigService systemConfigService;
+
+
+    public UserStateEvaluatorService(UserRepository userRepository,
+                                     UserPhotoRepository userPhotoRepository,
+                                     MatchRepository matchRepository,
+                                     UserSettingsService userSettingsService,
+                                     UserSettingsRepository userSettingsRepository,
+                                     com.example.myproject.service.System.SystemConfigService systemConfigService) {
         this.userRepository = userRepository;
+        this.userPhotoRepository = userPhotoRepository;
+        this.matchRepository = matchRepository;
         this.userSettingsService = userSettingsService;
+        this.userSettingsRepository = userSettingsRepository;
+        this.systemConfigService = systemConfigService;
     }
+
+
 
     // =====================================================
     // 🔵 נקודת כניסה ראשית – לפי userId
@@ -49,7 +67,45 @@ public class UserStateEvaluatorService {
     public UserStateSummary evaluateUserState(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found: " + userId));
-        return evaluateUserState(user);
+        UserStateSummary base = evaluateUserState(user);
+
+// ✅ Rule 27 — System/Admin ban via SystemConfig (central gate)
+        if (systemConfigService != null && systemConfigService.isUserBanned(userId)) {
+            java.util.List<String> reasons = new java.util.ArrayList<>(
+                    base.getReasonsBlocked() == null ? java.util.List.of() : base.getReasonsBlocked()
+            );
+            if (!reasons.contains("SYSTEM_BANNED")) reasons.add("SYSTEM_BANNED");
+
+            return new UserStateSummary(
+                    base.getUserId(),
+                    base.isBasicProfileCompleted(),
+                    base.isFullProfileCompleted(),
+                    base.getProfileState(),
+                    base.isHasPrimaryPhoto(),
+                    base.isVerified(),
+                    base.isInGlobalPool(),
+                    base.getGlobalAccessState(),
+                    base.getWeddingMode(),
+                    base.getBackgroundMode(),
+                    base.isProfileLocked(),
+                    base.isDeletionRequested(),
+
+                    false, // canUpdateProfile
+                    false, // canChangePhotos
+                    false, // canEnterGlobalPool
+                    false, // canExitGlobalPool
+                    false, // canEnterWedding
+                    false, // canSwitchToGlobalMode
+                    false, // canLike
+                    false, // canSendMessage
+                    false, // canViewOppositeGenderProfiles
+                    false, // canViewSameGenderProfiles
+
+                    reasons
+            );
+    }
+
+        return base;
     }
 
     // =====================================================
@@ -150,8 +206,7 @@ public class UserStateEvaluatorService {
 
         // --- האם מותר לראות פרופילים של מין אחר/אותו מין ---
         boolean canViewOppositeGenderProfiles = user.isAllowProfileViewByOppositeGender();
-        boolean canViewSameGenderProfiles = user.isAllowProfileViewBySameGender();
-
+        boolean canViewSameGenderProfiles = userSettingsService.canViewSameGender(userId);
         // --- האם מותר לשלוח לייק / הודעה ---
         // ✅ SSOT: אינטראקציות דורשות ≥1 photo + not locked
         boolean canLike = hasAnyPhoto && !deletionRequested && !profileLocked;
@@ -239,6 +294,32 @@ public class UserStateEvaluatorService {
         }
     }
 
+
+    // =====================================================
+// 🔵 Same-gender helper
+// =====================================================
+
+    // =====================================================
+// 🔵 Chat Gate wrapper (SSOT compat)
+// =====================================================
+    public void assertCanMessage(Long senderUserId,
+                                 Long recipientUserId,
+                                 Long matchId,
+                                 Long meetingWeddingId) {
+
+        if (senderUserId == null) throw new IllegalArgumentException("senderUserId is null");
+        // שומרים את שאר הפרמטרים בחתימה כדי להיות SSOT-compat גם אם כרגע לא כולם בשימוש
+
+        UserStateSummary state = evaluateUserState(senderUserId);
+
+        // שומר את ההתנהגות שהייתה לך ב-ChatMessageService (canSendMessage + primary photo)
+        if (!state.isHasPrimaryPhoto()) {
+            throw new IllegalStateException("Sender must have a primary photo to send messages");
+        }
+        if (!state.isCanSendMessage()) {
+            throw new IllegalStateException("User cannot send messages now: " + state.getReasonsBlocked());
+        }
+    }
     // =====================================================
     // 🔵 DTO מסכם – מצב משתמש מלא ל-Frontend/Controllers
     // =====================================================

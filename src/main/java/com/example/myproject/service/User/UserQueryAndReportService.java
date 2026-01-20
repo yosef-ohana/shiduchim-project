@@ -170,4 +170,30 @@ public class UserQueryAndReportService {
     public List<User> findUsersUpdatedProfileAfter(LocalDateTime since) {
         return userRepository.findByLastProfileUpdateAtAfter(since);
     }
+
+    // =====================================================
+// 🔵 Photo Quality / Invites Reports (SSOT wrappers)
+// =====================================================
+
+    public java.util.List<User> listUsersByPhotosCount(int photosCount) {
+        if (photosCount < 0) photosCount = 0;
+        return userRepository.findByPhotosCount(photosCount);
+    }
+
+    public java.util.List<User> listUsersByPhotosCountAtMost(int maxPhotosCount) {
+        if (maxPhotosCount < 0) maxPhotosCount = 0;
+        // אצלך ב-UserRepository כבר קיים: findByPhotosCountLessThanEqual
+        return userRepository.findByPhotosCountLessThanEqual(maxPhotosCount);
+    }
+
+    public java.util.List<User> listUsersMissingPrimaryButHasPhotos() {
+        // אצלך ב-UserRepository כבר קיים: findByHasPrimaryPhotoFalseAndPhotosCountGreaterThan
+        return userRepository.findByHasPrimaryPhotoFalseAndPhotosCountGreaterThan(0);
+    }
+
+    public java.util.List<User> listUsersInvitedBy(Long invitedByUserId) {
+        if (invitedByUserId == null) return java.util.List.of();
+        // אצלך ב-UserRepository כבר קיים: findByInvitedByUserId
+        return userRepository.findByInvitedByUserId(invitedByUserId);
+    }
 }

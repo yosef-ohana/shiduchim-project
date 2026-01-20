@@ -218,21 +218,16 @@ public class ChatMessageService {
         Long recipientId = resolveOtherUserId(match, senderUserId);
         Long meetingWeddingId = match.getMeetingWeddingId();
 
-        // ✅ Gate (SYNC): אצלך אין assertCanMessage, אז משתמשים ב-evaluateUserState
-        User sender = userRepository.findById(senderUserId)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + senderUserId));
+        // ========================
+// ✅ SSOT Gate: UserStateEvaluator (compat wrapper)
+// ========================
+        userStateEvaluatorService.assertCanMessage(
+                senderUserId,
+                recipientId,
+                matchId,
+                meetingWeddingId
+        );
 
-        UserStateEvaluatorService.UserStateSummary senderState =
-                userStateEvaluatorService.evaluateUserState(sender);
-
-        if (senderState != null) {
-            if (!senderState.isCanSendMessage()) {
-                throw new IllegalStateException("User cannot send messages right now.");
-            }
-            if (!senderState.isHasPrimaryPhoto()) {
-                throw new IllegalStateException("Primary photo is required to send messages.");
-            }
-        }
 
         ChatMessage msg = buildMessage(
                 match,

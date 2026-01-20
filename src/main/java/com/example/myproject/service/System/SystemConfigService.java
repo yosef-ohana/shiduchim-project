@@ -249,6 +249,79 @@ public class SystemConfigService {
     }
 
     // =========================================================
+// Typed getters (SystemRules friendly)
+// =========================================================
+
+
+    // =========================================================
+// ✅ System/Admin Ban (Rule 27) — centralized via SystemConfig
+// =========================================================
+    @Transactional(readOnly = true)
+    public boolean isUserBanned(Long userId) {
+        return isUserBanned(null, userId, LocalDateTime.now());
+    }
+
+    @Transactional(readOnly = true)
+    public boolean isUserBanned(String environment, Long userId, LocalDateTime now) {
+        if (userId == null) return false;
+        if (now == null) now = LocalDateTime.now();
+
+        String[] keys = new String[] {
+                "BAN_ALL",
+                "BAN_USER_" + userId,
+                "ban_user_" + userId,
+                "userBan." + userId,
+                "user_ban." + userId,
+                "ban.user." + userId
+        };
+
+        for (String k : keys) {
+            String v = getEffectiveValue(environment, k, now).orElse(null);
+            if (v == null || v.isBlank()) continue;
+
+            String s = v.trim();
+
+            // permanent ban
+            if ("true".equalsIgnoreCase(s)
+                    || "perm".equalsIgnoreCase(s)
+                    || "permanent".equalsIgnoreCase(s)
+                    || "forever".equalsIgnoreCase(s)) {
+                return true;
+            }
+
+            // until ISO datetime
+            try {
+                LocalDateTime until = LocalDateTime.parse(s);
+                if (until != null && now.isBefore(until)) return true;
+            } catch (Exception ignore) { }
+        }
+
+        return false;
+    }
+
+    // =========================================================
+// ✅ Load/Degrade — centralized flag via SystemConfig
+// =========================================================
+    @Transactional(readOnly = true)
+    public boolean shouldDegradeNonCriticalNow() {
+        if (getBoolean(null, "DEGRADE_NON_CRITICAL", false)) return true;
+        if (getBoolean(null, "degrade.nonCritical", false)) return true;
+        if (getBoolean(null, "system.degradeNonCritical", false)) return true;
+
+        String untilRaw = getString(null, "DEGRADE_NON_CRITICAL_UNTIL", null);
+        if (untilRaw != null && !untilRaw.isBlank()) {
+            try {
+                LocalDateTime until = LocalDateTime.parse(untilRaw.trim());
+                return LocalDateTime.now().isBefore(until);
+            } catch (Exception ignore) { }
+        }
+
+        return false;
+    }
+
+
+
+    // =========================================================
     // Typed getters (SystemRules friendly)
     // =========================================================
 
