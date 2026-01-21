@@ -531,8 +531,17 @@ public class ChatMessageService {
     @Transactional(readOnly = true)
     public List<ChatMessage> getConversationByThreadId(String conversationId) {
         if (conversationId == null || conversationId.isBlank()) return List.of();
-        return chatMessageRepository.findByConversationIdAndDeletedFalseOrderByCreatedAtAsc(conversationId);
+
+        Long cid;
+        try {
+            cid = Long.valueOf(conversationId);
+        } catch (NumberFormatException e) {
+            return List.of();
+        }
+
+        return chatMessageRepository.findByConversationIdAndDeletedFalseOrderByCreatedAtAsc(cid);
     }
+
 
     // ============================================================
     // ✅ 22 — WebSocket sync queries (since timestamp)

@@ -11,7 +11,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -168,11 +167,13 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessage, Long> 
     List<ChatMessage> findByMessageTypeAndSender_Id(ChatMessageType type, Long senderId);
 
     // ============================================================
-    // 🔵 9) ConversationId (String)
+    // 🔵 9) ConversationId (Long)   ✅ FIX: align with ChatMessage.conversationId type
     // ============================================================
 
-    List<ChatMessage> findByConversationIdOrderByCreatedAtAsc(String conversationId);
-    List<ChatMessage> findByConversationIdAndDeletedFalseOrderByCreatedAtAsc(String conversationId);
+    List<ChatMessage> findByConversationIdOrderByCreatedAtAsc(Long conversationId); // ✅ FIX (was String)
+    List<ChatMessage> findByConversationIdAndDeletedFalseOrderByCreatedAtAsc(Long conversationId);
+
+    long countByConversationIdAndDeletedFalse(Long conversationId);
 
     // ============================================================
     // 🔵 10) WebSocket Sync
